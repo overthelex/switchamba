@@ -9,10 +9,16 @@ Meta.Backend.lock_layout_group().
 
 import asyncio
 import logging
+import os
 import subprocess
 import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Sound file for switch notification
+_SOUND_FILE = Path(__file__).parent.parent.parent.parent / "sounds" / "switch.wav"
+_SOUND_PLAYER = "pw-play"
 
 DBUS_DEST = "org.gnome.Shell"
 DBUS_PATH = "/com/switchamba/LayoutSwitcher"
@@ -32,12 +38,24 @@ DEBOUNCE_INTERVAL = 0.3
 class LayoutSwitcher:
     """Switches keyboard layout via GNOME Shell extension D-Bus API."""
 
-    def __init__(self, layout_indices: dict[str, int] | None = None):
+    def __init__(self, layout_indices: dict[str, int] | None = None, sound: bool = True):
         self._indices = layout_indices or DEFAULT_LAYOUT_INDICES
         self._reverse = {v: k for k, v in self._indices.items()}
         self._last_switch_time: float = 0.0
         self._current_layout: str = "en"
         self._lock = asyncio.Lock()
+        self._sound = sound and _SOUND_FILE.exists()
+
+    def _play_sound(self) -> None:
+        """Play switch notification sound (non-blocking)."""
+        if self._sound:
+            try:
+                subprocess.Popen(
+                    [_SOUND_PLAYER, str(_SOUND_FILE)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass
 
     @property
     def current_layout(self) -> str:
@@ -149,6 +167,7 @@ class LayoutSwitcher:
             old = self._current_layout
             self._current_layout = language
             self._last_switch_time = time.monotonic()
+            self._play_sound()
             logger.info("Corrected: %s → %s (deleted %d)", old, language, n)
             return True
 
