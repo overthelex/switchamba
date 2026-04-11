@@ -3,54 +3,58 @@
 from evdev import ecodes
 
 from switchamba.detection.detector import LanguageDetector, Confidence
+from switchamba.input.keymap import WORD_BOUNDARY_SCANCODES
 
 
 class TestLanguageDetector:
     def setup_method(self):
-        self.detector = LanguageDetector(buffer_size=8)
+        self.detector = LanguageDetector()
 
-    def test_not_enough_data(self):
-        """Should return None with fewer than MIN_BUFFER_SIZE chars."""
-        result = self.detector.on_key(ecodes.KEY_T)
-        assert result is None
-        result = self.detector.on_key(ecodes.KEY_H)
-        assert result is None
-
-    def test_english_detection(self):
-        """Typing 'the' should detect English."""
-        # Type t-h-e-r-e (English word)
+    def test_no_detection_mid_word(self):
+        """Should return None while typing (no space yet)."""
         keys = [ecodes.KEY_T, ecodes.KEY_H, ecodes.KEY_E, ecodes.KEY_R, ecodes.KEY_E]
-        result = None
         for key in keys:
             result = self.detector.on_key(key)
+            assert result is None
 
-        # Should detect something (either EN or return detection)
-        # The detector starts with EN as default, so it may not trigger a switch
-        # if it correctly detects EN.
-        # We set current layout to RU to force a detection
-        self.detector.reset()
-        self.detector.current_layout = "ru"
-        for key in keys:
-            result = self.detector.on_key(key)
-
-        if result is not None:
-            assert result.language == "en"
-
-    def test_word_boundary_resets(self):
-        """Space should reset the buffer."""
-        self.detector.on_key(ecodes.KEY_T)
-        self.detector.on_key(ecodes.KEY_H)
-        self.detector.on_key(ecodes.KEY_SPACE)
-
-        # Buffer should be empty, so next few chars shouldn't trigger detection
-        result = self.detector.on_key(ecodes.KEY_A)
-        assert result is None
-
-    def test_buffer_text(self):
-        """get_buffer_text should return correct text for each layout."""
-        keys = [ecodes.KEY_T, ecodes.KEY_H, ecodes.KEY_E]
+    def test_detection_on_space(self):
+        """Should detect language when space is pressed."""
+        # Type "there" then space
+        self.detector.current_layout = "ru"  # Wrong layout
+        keys = [ecodes.KEY_T, ecodes.KEY_H, ecodes.KEY_E, ecodes.KEY_R, ecodes.KEY_E]
         for key in keys:
             self.detector.on_key(key)
+        result = self.detector.on_key(ecodes.KEY_SPACE)
+        # Should detect EN
+        if result is not None:
+            assert result.language == "en"
+            assert len(result.word_scancodes) == 5
 
-        assert self.detector.get_buffer_text("en") == "the"
-        assert self.detector.get_buffer_text("ru") == "еру"
+    def test_short_word_ignored(self):
+        """Single character words should not trigger detection."""
+        self.detector.on_key(ecodes.KEY_A)
+        result = self.detector.on_key(ecodes.KEY_SPACE)
+        assert result is None
+
+    def test_same_layout_no_detection(self):
+        """Should return None if detected language matches current."""
+        self.detector.current_layout = "en"
+        keys = [ecodes.KEY_T, ecodes.KEY_H, ecodes.KEY_E, ecodes.KEY_R, ecodes.KEY_E]
+        for key in keys:
+            self.detector.on_key(key)
+        result = self.detector.on_key(ecodes.KEY_SPACE)
+        # "there" is EN, current is EN — no switch needed
+        assert result is None
+
+    def test_russian_detection(self):
+        """Typing 'привет' scancodes should detect Russian."""
+        self.detector.current_layout = "en"
+        # привет = g-h-b-d-t-n
+        keys = [ecodes.KEY_G, ecodes.KEY_H, ecodes.KEY_B,
+                ecodes.KEY_D, ecodes.KEY_T, ecodes.KEY_N]
+        for key in keys:
+            self.detector.on_key(key)
+        result = self.detector.on_key(ecodes.KEY_SPACE)
+        if result is not None:
+            assert result.language == "ru"
+            assert len(result.word_scancodes) == 6
