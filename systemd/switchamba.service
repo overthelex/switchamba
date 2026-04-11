@@ -1,0 +1,13 @@
+[Unit]
+Description=Switchamba — automatic EN/RU/UA keyboard layout switching
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/switchamba/.venv/bin/python -m switchamba
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

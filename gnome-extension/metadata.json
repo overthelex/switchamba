@@ -1,0 +1,6 @@
+{
+  "name": "Switchamba Layout Switcher",
+  "description": "D-Bus API for programmatic keyboard layout switching",
+  "uuid": "switchamba@vovkes",
+  "shell-version": ["46"]
+}
