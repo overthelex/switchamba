@@ -38,6 +38,9 @@ async def run(config) -> None:
     detector = LanguageDetector()
     switcher = LayoutSwitcher()
 
+    # Stats tracking
+    stats = {"ngram": 0, "dict": 0, "script_family": 0, "bedrock": 0, "total": 0}
+
     await switcher.initialize()
     detector.current_layout = switcher.current_layout
 
@@ -79,6 +82,7 @@ async def run(config) -> None:
                     target_lang = bedrock_answer
                     detection.confidence = Confidence.MEDIUM
                     detection.reason = f"bedrock: {bedrock_answer} (was {detection.reason})"
+                    detection._channel = "bedrock"
                     logger.info("Bedrock resolved: %s → %s", texts, bedrock_answer)
                 else:
                     # Bedrock agrees with current layout or failed
@@ -111,11 +115,30 @@ async def run(config) -> None:
                     [key_event.scancode], [key_event.shifted]
                 )
                 detector.current_layout = target_lang
+
+                # Classify detection channel
+                channel = getattr(detection, "_channel", None)
+                if channel is None:
+                    reason = detection.reason
+                    if "ngram+dict" in reason:
+                        channel = "dict" if any(
+                            f": {v}" in reason for v in ["1.0", "0.5"]
+                        ) else "ngram"
+                    elif "script-family" in reason:
+                        channel = "script_family"
+                    elif "exclusive" in reason:
+                        channel = "script_family"
+                    else:
+                        channel = "ngram"
+
+                stats[channel] = stats.get(channel, 0) + 1
+                stats["total"] += 1
+
                 logger.info(
-                    "Corrected: '%s' → '%s' (%s) — %s",
-                    wrong_text, correct_text,
-                    target_lang,
-                    detection.reason,
+                    "[%s] '%s' → '%s' (%s) | stats: ngram=%d dict=%d family=%d bedrock=%d total=%d",
+                    channel, wrong_text, correct_text, target_lang,
+                    stats["ngram"], stats["dict"], stats["script_family"],
+                    stats["bedrock"], stats["total"],
                 )
     finally:
         await _set_indicator_active(False)
