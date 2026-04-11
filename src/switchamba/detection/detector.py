@@ -117,16 +117,16 @@ class LanguageDetector:
         # Tier 2: N-gram scoring
         ngram_scores = score_all_languages(texts)
 
-        # Tier 3: Dictionary scoring
+        # Tier 3: Dictionary scoring (exact word match)
         dict_scores = self._dictionary.score_prefix(texts)
 
-        # Combined scores
+        # Combined scores — dictionary match is a strong signal
         combined = {}
         for lang in LAYOUTS:
-            combined[lang] = (
-                NGRAM_WEIGHT * ngram_scores.get(lang, -1.0) +
-                DICT_WEIGHT * dict_scores.get(lang, 0.0)
-            )
+            ngram = ngram_scores.get(lang, -1.0)
+            dict_match = dict_scores.get(lang, 0.0)
+            # Dictionary bonus: if word found, add significant boost
+            combined[lang] = NGRAM_WEIGHT * ngram + DICT_WEIGHT * dict_match * 2.0
 
         # Rank
         ranked = sorted(combined.items(), key=lambda x: x[1], reverse=True)
@@ -171,9 +171,16 @@ class LanguageDetector:
         if best_lang == self._current_layout:
             return None
 
-        # Confidence too low
-        if confidence.value < Confidence.MEDIUM.value:
-            return None
+        # LOW confidence — return for Bedrock disambiguation (don't filter out)
+        if confidence == Confidence.LOW:
+            return Detection(
+                language=best_lang,
+                confidence=confidence,
+                scores=combined,
+                reason=reason,
+                word_scancodes=scancodes,
+                word_shifts=shifts,
+            )
 
         # INERTIA: current layout text must be clearly worse
         current_score = combined.get(self._current_layout, -2.0)

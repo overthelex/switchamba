@@ -62,11 +62,36 @@ async def run(config) -> None:
             if detection is None:
                 continue
 
+            target_lang = detection.language
+
+            # LOW confidence → ask Bedrock if available
+            if detection.confidence == Confidence.LOW and _bedrock_client is not None:
+                word_sc = detection.word_scancodes
+                word_sh = detection.word_shifts
+                texts = {
+                    lang: scancodes_to_text(word_sc, lang, word_sh)
+                    for lang in ("en", "ru", "ua")
+                }
+                bedrock_answer = await _bedrock_client.disambiguate(
+                    texts, detection.scores
+                )
+                if bedrock_answer and bedrock_answer != detector.current_layout:
+                    target_lang = bedrock_answer
+                    detection.confidence = Confidence.MEDIUM
+                    detection.reason = f"bedrock: {bedrock_answer} (was {detection.reason})"
+                    logger.info("Bedrock resolved: %s → %s", texts, bedrock_answer)
+                else:
+                    # Bedrock agrees with current layout or failed
+                    continue
+
+            if detection.confidence.value < Confidence.MEDIUM.value:
+                continue
+
             # Word-boundary correction: backspace whole word, switch, replay
             word_sc = detection.word_scancodes
             word_sh = detection.word_shifts
             wrong_text = scancodes_to_text(word_sc, detector.current_layout, word_sh)
-            correct_text = scancodes_to_text(word_sc, detection.language, word_sh)
+            correct_text = scancodes_to_text(word_sc, target_lang, word_sh)
 
             # +1 for the space/enter that triggered the boundary
             delete_count = len(word_sc) + 1
@@ -76,7 +101,7 @@ async def run(config) -> None:
             reader.suppress(suppress_time)
 
             corrected = await switcher.backspace_and_switch(
-                detection.language, delete_count
+                target_lang, delete_count
             )
 
             if corrected:
@@ -85,13 +110,11 @@ async def run(config) -> None:
                 await switcher.replay_scancodes(
                     [key_event.scancode], [key_event.shifted]
                 )
-                detector.current_layout = detection.language
+                detector.current_layout = target_lang
                 logger.info(
-                    "Corrected: '%s' → '%s' (%s → %s) — %s",
+                    "Corrected: '%s' → '%s' (%s) — %s",
                     wrong_text, correct_text,
-                    switcher._reverse.get(
-                        switcher._indices.get(detector.current_layout)),
-                    detection.language,
+                    target_lang,
                     detection.reason,
                 )
     finally:

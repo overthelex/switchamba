@@ -30,7 +30,7 @@ class BedrockConfig:
     model_quick: str = ""
     model_standard: str = ""
     model_deep: str = ""
-    timeout_ms: int = 500
+    timeout_ms: int = 2000
     cache_size: int = 256
 
 
