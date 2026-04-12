@@ -99,6 +99,18 @@ WORD_BOUNDARY_SCANCODES = {
     ecodes.KEY_TAB,
 }
 
+# Edit / navigation keys that affect the word buffer
+EDIT_SCANCODES = {
+    ecodes.KEY_BACKSPACE,
+    ecodes.KEY_DELETE,
+    ecodes.KEY_LEFT,
+    ecodes.KEY_RIGHT,
+    ecodes.KEY_UP,
+    ecodes.KEY_DOWN,
+    ecodes.KEY_HOME,
+    ecodes.KEY_END,
+}
+
 
 def scancode_to_char(scancode: int, layout: str, shifted: bool = False) -> str | None:
     """Convert a scancode to a character in the given layout."""

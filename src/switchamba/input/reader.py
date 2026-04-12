@@ -11,9 +11,12 @@ from dataclasses import dataclass
 import evdev
 from evdev import ecodes
 
-from .keymap import KEYMAP
+from .keymap import KEYMAP, EDIT_SCANCODES
 
 logger = logging.getLogger(__name__)
+
+# Sentinel scancode emitted on double-Ctrl tap
+DOUBLE_CTRL_SCANCODE = -1
 
 
 @dataclass
@@ -22,6 +25,7 @@ class KeyEvent:
     scancode: int
     pressed: bool  # True = key down, False = key up
     shifted: bool  # True if Shift was held
+    ctrl: bool  # True if Ctrl was held
     timestamp: float
 
 
@@ -67,6 +71,9 @@ class KeystrokeReader:
         self._device_path = device_path
         self._devices: list[evdev.InputDevice] = []
         self._shift_held = False
+        self._ctrl_held = False
+        self._ctrl_other_key = False  # True if non-modifier pressed while Ctrl held
+        self._last_ctrl_tap: float = 0.0  # monotonic time of last clean Ctrl tap
         self._running = False
         self._suppress_until: float = 0.0  # Ignore events until this timestamp
         self._pending_scancodes: list[tuple[int, bool]] = []  # Collected during suppress
@@ -152,9 +159,13 @@ class KeystrokeReader:
                     if key_event_raw.keystate == key_event_raw.key_down:
                         if event.code in KEYMAP:
                             self._pending_scancodes.append((event.code, self._shift_held))
-                    # Track shift even during suppress
+                    # Track modifiers even during suppress
                     if event.code in (ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT):
                         self._shift_held = key_event_raw.keystate in (
+                            key_event_raw.key_down, key_event_raw.key_hold,
+                        )
+                    if event.code in (ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL):
+                        self._ctrl_held = key_event_raw.keystate in (
                             key_event_raw.key_down, key_event_raw.key_hold,
                         )
                     continue
@@ -169,17 +180,47 @@ class KeystrokeReader:
                     )
                     continue
 
-                # Only process key-down events for mapped keys
+                # Track ctrl state and detect double-tap
+                if event.code in (ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL):
+                    was_held = self._ctrl_held
+                    self._ctrl_held = key_event.keystate in (
+                        key_event.key_down,
+                        key_event.key_hold,
+                    )
+                    if key_event.keystate == key_event.key_down:
+                        self._ctrl_other_key = False
+                    elif was_held and not self._ctrl_held and not self._ctrl_other_key:
+                        # Clean Ctrl release (no other key pressed during hold)
+                        import time as _t2
+                        now = _t2.monotonic()
+                        if now - self._last_ctrl_tap < 0.4:
+                            self._last_ctrl_tap = 0.0
+                            ke = KeyEvent(
+                                scancode=DOUBLE_CTRL_SCANCODE,
+                                pressed=True, shifted=False, ctrl=False,
+                                timestamp=event.timestamp(),
+                            )
+                            await queue.put(ke)
+                        else:
+                            self._last_ctrl_tap = now
+                    continue
+
+                # Mark if non-modifier key pressed while Ctrl held
+                if self._ctrl_held and key_event.keystate == key_event.key_down:
+                    self._ctrl_other_key = True
+
+                # Only process key-down events for mapped or edit keys
                 if key_event.keystate != key_event.key_down:
                     continue
 
-                if event.code not in KEYMAP:
+                if event.code not in KEYMAP and event.code not in EDIT_SCANCODES:
                     continue
 
                 ke = KeyEvent(
                     scancode=event.code,
                     pressed=True,
                     shifted=self._shift_held,
+                    ctrl=self._ctrl_held,
                     timestamp=event.timestamp(),
                 )
                 await queue.put(ke)

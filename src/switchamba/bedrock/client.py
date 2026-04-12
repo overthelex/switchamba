@@ -31,6 +31,16 @@ Which language did the user intend to type? Consider:
 
 Respond with ONLY the language code: en, ru, or ua"""
 
+CORRECTION_PROMPT = """Fix any spelling, grammar, or typing errors in this text.
+The text may be in English, Russian, or Ukrainian (or mixed).
+Return ONLY the corrected text, nothing else.
+If no corrections are needed, return the text exactly as is.
+Do not add punctuation at the end if there was none.
+Do not change the language or style of the text.
+Do not add explanations.
+
+Text: {text}"""
+
 
 class BedrockDisambiguator:
     """Async Bedrock client for language disambiguation."""
@@ -122,4 +132,51 @@ class BedrockDisambiguator:
             return None
         except Exception as e:
             logger.warning("Bedrock call failed: %s", e)
+            return None
+
+    async def correct_text(self, text: str) -> str | None:
+        """Send text to Bedrock Sonnet for spelling/grammar correction.
+
+        Returns corrected text, or None on failure/timeout.
+        """
+        if not text.strip():
+            return None
+
+        model_id = self._config.model_standard
+        if not model_id:
+            logger.warning("No model_standard configured for text correction")
+            return None
+
+        prompt = CORRECTION_PROMPT.format(text=text)
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": max(len(text) * 2, 200),
+            "temperature": 0,
+            "messages": [{"role": "user", "content": prompt}],
+        })
+
+        try:
+            result = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    self._executor,
+                    lambda: self._client.invoke_model(
+                        modelId=model_id,
+                        body=body,
+                        contentType="application/json",
+                        accept="application/json",
+                    ),
+                ),
+                timeout=8.0,
+            )
+
+            response_body = json.loads(result["body"].read())
+            corrected = response_body["content"][0]["text"].strip()
+            logger.info("Bedrock correction: '%s' → '%s'", text, corrected)
+            return corrected
+
+        except asyncio.TimeoutError:
+            logger.warning("Bedrock correction timeout")
+            return None
+        except Exception as e:
+            logger.warning("Bedrock correction failed: %s", e)
             return None

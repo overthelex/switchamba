@@ -8,9 +8,11 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 
+from evdev import ecodes
+
 from ..input.keymap import (
     EN, RU, UA, LAYOUTS,
-    ALPHA_SCANCODES, WORD_BOUNDARY_SCANCODES,
+    ALPHA_SCANCODES, WORD_BOUNDARY_SCANCODES, EDIT_SCANCODES,
     RU_EXCLUSIVE_SCANCODES, KEYMAP,
     scancodes_to_text,
 )
@@ -70,8 +72,13 @@ class LanguageDetector:
     def current_layout(self, value: str) -> None:
         self._current_layout = value
 
-    def on_key(self, scancode: int, shifted: bool = False) -> Detection | None:
+    def on_key(self, scancode: int, shifted: bool = False, ctrl: bool = False) -> Detection | None:
         """Process a keystroke. Returns Detection on word boundary if wrong layout."""
+
+        # Ctrl + any key → buffer is unreliable (paste, cut, undo, etc.)
+        if ctrl:
+            self.reset()
+            return None
 
         # Word boundary — analyze completed word
         if scancode in WORD_BOUNDARY_SCANCODES:
@@ -79,6 +86,18 @@ class LanguageDetector:
             self._word_scancodes.clear()
             self._word_shifts.clear()
             return detection
+
+        # Edit keys — adjust buffer
+        if scancode in EDIT_SCANCODES:
+            if scancode == ecodes.KEY_BACKSPACE:
+                # Remove last character from buffer
+                if self._word_scancodes:
+                    self._word_scancodes.pop()
+                    self._word_shifts.pop()
+            else:
+                # Arrows, Home, End, Delete — cursor moved, buffer unreliable
+                self.reset()
+            return None
 
         # Collect alpha keys into current word
         if scancode in ALPHA_SCANCODES:
