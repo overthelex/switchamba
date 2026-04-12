@@ -10,7 +10,7 @@ import sys
 
 from .config import load_config
 from .detection.detector import LanguageDetector, Confidence
-from .input.reader import KeystrokeReader
+from .input.reader import KeystrokeReader, DOUBLE_CTRL_SCANCODE
 from .input.keymap import scancodes_to_text, WORD_BOUNDARY_SCANCODES
 from .switching.switcher import LayoutSwitcher
 
@@ -60,7 +60,12 @@ async def run(config) -> None:
                 if actual != detector.current_layout:
                     detector.current_layout = actual
 
-            detection = detector.on_key(key_event.scancode, key_event.shifted)
+            # Double-Ctrl: select line left of cursor, send to Bedrock for correction
+            if key_event.scancode == DOUBLE_CTRL_SCANCODE:
+                await _handle_line_correction(reader, switcher, detector)
+                continue
+
+            detection = detector.on_key(key_event.scancode, key_event.shifted, key_event.ctrl)
 
             if detection is None:
                 continue
@@ -143,6 +148,55 @@ async def run(config) -> None:
     finally:
         await _set_indicator_active(False)
         await reader.stop()
+
+
+async def _handle_line_correction(reader, switcher, detector) -> None:
+    """Handle double-Ctrl: select line left of cursor, correct via Bedrock Sonnet."""
+    if _bedrock_client is None:
+        logger.debug("Double-Ctrl ignored: Bedrock not configured")
+        return
+
+    # Suppress reader during the entire operation
+    reader.suppress(15.0)
+    detector.reset()
+
+    try:
+        # Select text from cursor to line start
+        await switcher.select_to_line_start()
+        await asyncio.sleep(0.05)
+
+        # Copy selection
+        await switcher.copy_selection()
+        await asyncio.sleep(0.1)
+
+        # Read clipboard
+        text = await switcher.read_clipboard()
+        if not text or not text.strip():
+            await switcher.cancel_selection()
+            logger.debug("Double-Ctrl: no text to correct")
+            return
+
+        logger.info("Double-Ctrl: correcting '%s'", text)
+
+        # Send to Bedrock Sonnet
+        corrected = await _bedrock_client.correct_text(text)
+
+        if corrected and corrected != text:
+            # Paste corrected text (selection is still active, will be replaced)
+            await switcher.write_clipboard_and_paste(corrected)
+            logger.info("Double-Ctrl corrected: '%s' → '%s'", text, corrected)
+        else:
+            # No changes — cancel selection
+            await switcher.cancel_selection()
+            logger.debug("Double-Ctrl: no corrections needed")
+
+    except Exception as e:
+        logger.warning("Double-Ctrl correction failed: %s", e)
+        await switcher.cancel_selection()
+    finally:
+        # Discard any keys pressed during the operation
+        reader.drain_pending()
+        reader.suppress(0.3)
 
 
 async def _set_indicator_active(active: bool) -> None:

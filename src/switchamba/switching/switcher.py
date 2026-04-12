@@ -236,6 +236,86 @@ class LayoutSwitcher:
                        old, language, n, correct_text)
             return True
 
+    def _send_key_combo(self, modifier: int, key: int) -> None:
+        """Send modifier+key combo via UInput (blocking, run in executor)."""
+        from evdev import UInput, ecodes as e
+        ui = UInput()
+        ui.write(e.EV_KEY, modifier, 1)
+        ui.syn()
+        time.sleep(0.008)
+        ui.write(e.EV_KEY, key, 1)
+        ui.syn()
+        time.sleep(0.008)
+        ui.write(e.EV_KEY, key, 0)
+        ui.syn()
+        time.sleep(0.008)
+        ui.write(e.EV_KEY, modifier, 0)
+        ui.syn()
+        ui.close()
+
+    def _send_single_key(self, key: int) -> None:
+        """Send a single key press/release via UInput (blocking)."""
+        from evdev import UInput, ecodes as e
+        ui = UInput()
+        ui.write(e.EV_KEY, key, 1)
+        ui.syn()
+        time.sleep(0.008)
+        ui.write(e.EV_KEY, key, 0)
+        ui.syn()
+        ui.close()
+
+    async def select_to_line_start(self) -> None:
+        """Send Shift+Home to select text from cursor to line start."""
+        from evdev import ecodes as e
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: self._send_key_combo(e.KEY_LEFTSHIFT, e.KEY_HOME)
+        )
+
+    async def copy_selection(self) -> None:
+        """Send Ctrl+C to copy selection to clipboard."""
+        from evdev import ecodes as e
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: self._send_key_combo(e.KEY_LEFTCTRL, e.KEY_C)
+        )
+
+    async def cancel_selection(self) -> None:
+        """Send Right arrow to cancel selection without moving cursor."""
+        from evdev import ecodes as e
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: self._send_single_key(e.KEY_RIGHT)
+        )
+
+    async def read_clipboard(self) -> str | None:
+        """Read clipboard contents via wl-paste (Wayland)."""
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    ["wl-paste", "--no-newline"],
+                    capture_output=True, text=True, timeout=2,
+                ),
+            )
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+        except Exception as e:
+            logger.warning("wl-paste failed: %s", e)
+        return None
+
+    async def write_clipboard_and_paste(self, text: str) -> None:
+        """Write text to clipboard via wl-copy, then Ctrl+V to paste."""
+        from evdev import ecodes as e
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: subprocess.run(
+                ["wl-copy", "--", text],
+                capture_output=True, text=True, timeout=2,
+            ),
+        )
+        await asyncio.sleep(0.05)
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: self._send_key_combo(e.KEY_LEFTCTRL, e.KEY_V)
+        )
+
     async def switch_to(self, language: str) -> bool:
         """Switch layout without correction (just switch)."""
         if language == self._current_layout:
