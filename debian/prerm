@@ -1,0 +1,19 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove|upgrade)
+        # Stop user service for all logged-in users
+        for user_dir in /home/*; do
+            username=$(basename "$user_dir")
+            if id "$username" >/dev/null 2>&1; then
+                su - "$username" -c "systemctl --user stop switchamba.service 2>/dev/null || true" 2>/dev/null || true
+                su - "$username" -c "systemctl --user disable switchamba.service 2>/dev/null || true" 2>/dev/null || true
+            fi
+        done
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

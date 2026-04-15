@@ -1,0 +1,41 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    configure)
+        # Update icon cache
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
+        fi
+
+        # Update desktop database
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+        fi
+
+        # Enable GNOME extension for all users
+        if command -v gnome-extensions >/dev/null 2>&1; then
+            # Will be enabled per-user on first run via the setup wizard
+            echo ""
+            echo "============================================="
+            echo "  Switchamba installed successfully!"
+            echo ""
+            echo "  Launch 'Switchamba Setup' from your"
+            echo "  application menu to complete setup."
+            echo "============================================="
+            echo ""
+        fi
+
+        # Launch setup wizard for the installing user (if running in a GUI session)
+        if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+            REAL_USER="${SUDO_USER:-$USER}"
+            if [ "$REAL_USER" != "root" ] && [ -n "$REAL_USER" ]; then
+                su - "$REAL_USER" -c "nohup /usr/bin/switchamba-setup --first-run >/dev/null 2>&1 &" || true
+            fi
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

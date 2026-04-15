@@ -1,0 +1,49 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export PYBUILD_NAME = switchamba
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+override_dh_auto_install:
+	dh_auto_install
+
+	# Install GNOME Shell extension
+	install -d debian/switchamba/usr/share/gnome-shell/extensions/switchamba@vovkes
+	install -m 644 gnome-extension/extension.js \
+		debian/switchamba/usr/share/gnome-shell/extensions/switchamba@vovkes/
+	install -m 644 gnome-extension/metadata.json \
+		debian/switchamba/usr/share/gnome-shell/extensions/switchamba@vovkes/
+	install -m 644 gnome-extension/icon.svg \
+		debian/switchamba/usr/share/gnome-shell/extensions/switchamba@vovkes/
+
+	# Install systemd user service
+	install -d debian/switchamba/usr/lib/systemd/user
+	install -m 644 debian/switchamba.service \
+		debian/switchamba/usr/lib/systemd/user/switchamba.service
+
+	# Install sounds
+	install -d debian/switchamba/usr/share/switchamba/sounds
+	install -m 644 sounds/switch.wav \
+		debian/switchamba/usr/share/switchamba/sounds/
+
+	# Install desktop file
+	install -d debian/switchamba/usr/share/applications
+	install -m 644 debian/switchamba-setup.desktop \
+		debian/switchamba/usr/share/applications/
+
+	# Install app icon
+	install -d debian/switchamba/usr/share/icons/hicolor/scalable/apps
+	install -m 644 icon.svg \
+		debian/switchamba/usr/share/icons/hicolor/scalable/apps/switchamba.svg
+
+	# Install the setup UI script
+	install -d debian/switchamba/usr/share/switchamba
+	install -m 755 switchamba-setup \
+		debian/switchamba/usr/share/switchamba/switchamba-setup
+
+	# Install the launcher wrapper
+	install -d debian/switchamba/usr/bin
+	install -m 755 debian/switchamba-setup-wrapper \
+		debian/switchamba/usr/bin/switchamba-setup

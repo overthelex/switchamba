@@ -1,0 +1,962 @@
+#!/usr/bin/env python3
+"""Switchamba Setup Wizard & Settings UI.
+
+GTK4/Adwaita application for initial setup and configuration management.
+Launched automatically after package installation or from the app menu.
+"""
+
+import gi
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+
+import grp
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from gi.repository import Adw, Gio, GLib, Gtk, Pango
+
+
+CONFIG_DIR = Path.home() / ".config" / "switchamba"
+CONFIG_FILE = CONFIG_DIR / "config.yaml"
+SERVICE_NAME = "switchamba.service"
+EXTENSION_UUID = "switchamba@vovkes"
+
+
+def is_in_input_group() -> bool:
+    try:
+        input_gid = grp.getgrnam("input").gr_gid
+        return input_gid in os.getgroups()
+    except KeyError:
+        return False
+
+
+def add_to_input_group() -> bool:
+    try:
+        result = subprocess.run(
+            ["pkexec", "usermod", "-aG", "input", os.getlogin()],
+            capture_output=True, text=True, timeout=60,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def is_extension_enabled() -> bool:
+    try:
+        result = subprocess.run(
+            ["gnome-extensions", "info", EXTENSION_UUID],
+            capture_output=True, text=True, timeout=5,
+        )
+        return "ENABLED" in result.stdout
+    except Exception:
+        return False
+
+
+def enable_extension() -> bool:
+    try:
+        result = subprocess.run(
+            ["gnome-extensions", "enable", EXTENSION_UUID],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def is_service_enabled() -> bool:
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-enabled", SERVICE_NAME],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip() == "enabled"
+    except Exception:
+        return False
+
+
+def is_service_running() -> bool:
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", SERVICE_NAME],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip() == "active"
+    except Exception:
+        return False
+
+
+def enable_and_start_service() -> bool:
+    try:
+        subprocess.run(
+            ["systemctl", "--user", "daemon-reload"],
+            capture_output=True, timeout=5,
+        )
+        subprocess.run(
+            ["systemctl", "--user", "enable", SERVICE_NAME],
+            capture_output=True, timeout=5,
+        )
+        result = subprocess.run(
+            ["systemctl", "--user", "start", SERVICE_NAME],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def stop_service() -> bool:
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "stop", SERVICE_NAME],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def load_config() -> dict:
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        import yaml
+        with open(CONFIG_FILE) as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_config(data: dict) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        import yaml
+        with open(CONFIG_FILE, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+    except Exception as e:
+        print(f"Error saving config: {e}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Splash Screen (business-style branding on launch)
+# ---------------------------------------------------------------------------
+
+SPLASH_CSS = """
+.splash-window {
+    background: linear-gradient(160deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%);
+}
+.splash-title {
+    font-size: 42px;
+    font-weight: 800;
+    letter-spacing: 3px;
+    color: #ffffff;
+    text-shadow: 0 2px 12px rgba(106, 172, 240, 0.5);
+}
+.splash-subtitle {
+    font-size: 15px;
+    font-weight: 400;
+    letter-spacing: 5px;
+    color: #6AACF0;
+}
+.splash-divider {
+    background-color: #6AACF0;
+    min-height: 2px;
+    opacity: 0.6;
+}
+.splash-version {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    letter-spacing: 2px;
+}
+.splash-authors {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.7);
+}
+.splash-author-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+}
+.splash-copyright {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.35);
+}
+.splash-layout-en {
+    font-size: 28px;
+    font-weight: 800;
+    color: #6AACF0;
+}
+.splash-layout-ru {
+    font-size: 28px;
+    font-weight: 800;
+    color: #F07070;
+}
+.splash-layout-ua {
+    font-size: 28px;
+    font-weight: 800;
+    color: #FFDA44;
+}
+.splash-arrow {
+    font-size: 18px;
+    color: rgba(255, 255, 255, 0.3);
+}
+"""
+
+
+class SplashScreen(Adw.Window):
+    """Business-style splash screen shown on application launch."""
+
+    def __init__(self, app, on_done=None):
+        super().__init__(
+            application=app,
+            title="Switchamba",
+            default_width=520,
+            default_height=400,
+            resizable=False,
+            decorated=False,
+            modal=True,
+        )
+        self._on_done = on_done
+
+        # Load CSS
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_string(SPLASH_CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+        self._build_ui()
+
+        # Auto-close after 3 seconds
+        GLib.timeout_add(3000, self._close_splash)
+
+        # Also allow click to dismiss
+        click = Gtk.GestureClick()
+        click.connect("released", lambda *_: self._close_splash())
+        self.add_controller(click)
+
+    def _build_ui(self):
+        overlay = Gtk.Overlay()
+
+        # Background
+        bg = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True, hexpand=True)
+        bg.add_css_class("splash-window")
+        overlay.set_child(bg)
+
+        # Content
+        content = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=0,
+            halign=Gtk.Align.CENTER,
+            valign=Gtk.Align.CENTER,
+            margin_start=40,
+            margin_end=40,
+        )
+
+        # Layout indicators: A -> Я -> І
+        layout_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=12,
+            halign=Gtk.Align.CENTER,
+            margin_bottom=20,
+        )
+        en_lbl = Gtk.Label(label="A")
+        en_lbl.add_css_class("splash-layout-en")
+        arrow1 = Gtk.Label(label="\u2192")
+        arrow1.add_css_class("splash-arrow")
+        ru_lbl = Gtk.Label(label="\u042F")
+        ru_lbl.add_css_class("splash-layout-ru")
+        arrow2 = Gtk.Label(label="\u2192")
+        arrow2.add_css_class("splash-arrow")
+        ua_lbl = Gtk.Label(label="\u0406")
+        ua_lbl.add_css_class("splash-layout-ua")
+        layout_box.append(en_lbl)
+        layout_box.append(arrow1)
+        layout_box.append(ru_lbl)
+        layout_box.append(arrow2)
+        layout_box.append(ua_lbl)
+        content.append(layout_box)
+
+        # Title
+        title = Gtk.Label(label="SWITCHAMBA")
+        title.add_css_class("splash-title")
+        content.append(title)
+
+        # Subtitle
+        subtitle = Gtk.Label(label="LAYOUT INTELLIGENCE")
+        subtitle.add_css_class("splash-subtitle")
+        subtitle.set_margin_top(4)
+        content.append(subtitle)
+
+        # Divider
+        divider = Gtk.Separator()
+        divider.add_css_class("splash-divider")
+        divider.set_margin_top(24)
+        divider.set_margin_bottom(24)
+        divider.set_size_request(200, -1)
+        divider.set_halign(Gtk.Align.CENTER)
+        content.append(divider)
+
+        # Authors
+        authors_label = Gtk.Label(label="CREATED BY")
+        authors_label.add_css_class("splash-version")
+        authors_label.set_margin_bottom(10)
+        content.append(authors_label)
+
+        author1 = Gtk.Label(label="Vladimir Obcharov")
+        author1.add_css_class("splash-author-name")
+        content.append(author1)
+
+        ampersand = Gtk.Label(label="&")
+        ampersand.add_css_class("splash-authors")
+        ampersand.set_margin_top(4)
+        ampersand.set_margin_bottom(4)
+        content.append(ampersand)
+
+        author2 = Gtk.Label(label="Claude Code")
+        author2.add_css_class("splash-author-name")
+        content.append(author2)
+
+        # Version + copyright
+        version_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=4,
+            halign=Gtk.Align.CENTER,
+            margin_top=28,
+        )
+        version = Gtk.Label(label="VERSION 0.1.0")
+        version.add_css_class("splash-version")
+        version_box.append(version)
+
+        copyright_lbl = Gtk.Label(label="\u00A9 2024\u20132026  All rights reserved")
+        copyright_lbl.add_css_class("splash-copyright")
+        version_box.append(copyright_lbl)
+
+        content.append(version_box)
+
+        overlay.add_overlay(content)
+        self.set_content(overlay)
+
+    def _close_splash(self):
+        self.close()
+        if self._on_done:
+            self._on_done()
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Setup Wizard (first-run experience)
+# ---------------------------------------------------------------------------
+
+class SetupWizard(Adw.Window):
+    def __init__(self, app, on_finish=None):
+        super().__init__(
+            application=app,
+            title="Switchamba Setup",
+            default_width=600,
+            default_height=500,
+            resizable=False,
+        )
+        self._on_finish = on_finish
+        self._pages = []
+        self._current = 0
+
+        self._build_ui()
+
+    def _build_ui(self):
+        self._stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.SLIDE_LEFT)
+
+        # --- Page 1: Welcome ---
+        welcome = self._make_page(
+            icon_name="dialog-information-symbolic",
+            title="Welcome to Switchamba",
+            description=(
+                "Switchamba automatically detects which language you are typing "
+                "and switches your keyboard layout between English, Russian, and Ukrainian.\n\n"
+                "This wizard will help you complete the initial setup."
+            ),
+        )
+        self._stack.add_named(welcome, "welcome")
+        self._pages.append("welcome")
+
+        # --- Page 2: Input Group ---
+        in_group = is_in_input_group()
+        group_desc = (
+            "Switchamba needs access to your keyboard device.\n"
+            "Your user must be in the 'input' system group."
+        )
+        if in_group:
+            group_desc += "\n\nYou are already in the input group."
+
+        group_page = self._make_page(
+            icon_name="input-keyboard-symbolic",
+            title="Keyboard Access",
+            description=group_desc,
+        )
+
+        if not in_group:
+            self._group_btn = Gtk.Button(label="Add me to input group")
+            self._group_btn.add_css_class("suggested-action")
+            self._group_btn.add_css_class("pill")
+            self._group_btn.set_halign(Gtk.Align.CENTER)
+            self._group_btn.connect("clicked", self._on_add_group)
+            self._group_status = Gtk.Label(label="")
+            self._group_status.add_css_class("dim-label")
+            box = group_page.get_first_child()  # the main box
+            box.append(self._group_btn)
+            box.append(self._group_status)
+        else:
+            check_label = Gtk.Label(label="  Already configured")
+            check_label.add_css_class("success")
+            check_label.set_halign(Gtk.Align.CENTER)
+            box = group_page.get_first_child()
+            box.append(check_label)
+
+        self._stack.add_named(group_page, "group")
+        self._pages.append("group")
+
+        # --- Page 3: GNOME Extension ---
+        ext_enabled = is_extension_enabled()
+        ext_desc = (
+            "The Switchamba GNOME Shell extension provides the panel indicator "
+            "and D-Bus interface for layout switching."
+        )
+        if ext_enabled:
+            ext_desc += "\n\nThe extension is already enabled."
+
+        ext_page = self._make_page(
+            icon_name="application-x-addon-symbolic",
+            title="GNOME Extension",
+            description=ext_desc,
+        )
+
+        if not ext_enabled:
+            self._ext_btn = Gtk.Button(label="Enable Extension")
+            self._ext_btn.add_css_class("suggested-action")
+            self._ext_btn.add_css_class("pill")
+            self._ext_btn.set_halign(Gtk.Align.CENTER)
+            self._ext_btn.connect("clicked", self._on_enable_ext)
+            self._ext_status = Gtk.Label(label="")
+            self._ext_status.add_css_class("dim-label")
+            box = ext_page.get_first_child()
+            box.append(self._ext_btn)
+            box.append(self._ext_status)
+        else:
+            check_label = Gtk.Label(label="  Already enabled")
+            check_label.add_css_class("success")
+            check_label.set_halign(Gtk.Align.CENTER)
+            box = ext_page.get_first_child()
+            box.append(check_label)
+
+        self._stack.add_named(ext_page, "extension")
+        self._pages.append("extension")
+
+        # --- Page 4: Bedrock (optional) ---
+        bedrock_page = self._make_page(
+            icon_name="network-server-symbolic",
+            title="AWS Bedrock (Optional)",
+            description=(
+                "Switchamba can use AWS Bedrock (Claude) for enhanced disambiguation "
+                "of ambiguous words and line-level grammar correction.\n\n"
+                "Skip this step if you don't have AWS credentials."
+            ),
+        )
+
+        bedrock_box = bedrock_page.get_first_child()
+
+        config = load_config()
+        bedrock_cfg = config.get("bedrock", {})
+
+        frame = Gtk.Frame()
+        frame.set_margin_start(40)
+        frame.set_margin_end(40)
+        list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        list_box.add_css_class("boxed-list")
+
+        # AWS Region
+        self._region_row = Adw.EntryRow(title="AWS Region")
+        self._region_row.set_text(bedrock_cfg.get("aws_region", "eu-central-1"))
+        list_box.append(self._region_row)
+
+        # Access Key
+        self._key_row = Adw.PasswordEntryRow(title="AWS Access Key ID")
+        self._key_row.set_text(os.environ.get("AWS_ACCESS_KEY_ID", ""))
+        list_box.append(self._key_row)
+
+        # Secret Key
+        self._secret_row = Adw.PasswordEntryRow(title="AWS Secret Access Key")
+        self._secret_row.set_text(os.environ.get("AWS_SECRET_ACCESS_KEY", ""))
+        list_box.append(self._secret_row)
+
+        # Model Quick
+        self._model_row = Adw.EntryRow(title="Bedrock Model (Quick)")
+        self._model_row.set_text(os.environ.get("BEDROCK_MODEL_QUICK", ""))
+        list_box.append(self._model_row)
+
+        frame.set_child(list_box)
+        bedrock_box.append(frame)
+
+        self._stack.add_named(bedrock_page, "bedrock")
+        self._pages.append("bedrock")
+
+        # --- Page 5: Start Service ---
+        start_page = self._make_page(
+            icon_name="media-playback-start-symbolic",
+            title="Start Switchamba",
+            description=(
+                "Everything is configured. Start the Switchamba service now?\n\n"
+                "The service will start automatically on login."
+            ),
+        )
+
+        start_box = start_page.get_first_child()
+
+        self._start_btn = Gtk.Button(label="Enable & Start Service")
+        self._start_btn.add_css_class("suggested-action")
+        self._start_btn.add_css_class("pill")
+        self._start_btn.set_halign(Gtk.Align.CENTER)
+        self._start_btn.connect("clicked", self._on_start_service)
+        self._start_status = Gtk.Label(label="")
+        self._start_status.add_css_class("dim-label")
+        start_box.append(self._start_btn)
+        start_box.append(self._start_status)
+
+        self._stack.add_named(start_page, "start")
+        self._pages.append("start")
+
+        # --- Navigation ---
+        header = Adw.HeaderBar()
+
+        self._back_btn = Gtk.Button(label="Back")
+        self._back_btn.connect("clicked", self._go_back)
+        self._back_btn.set_visible(False)
+        header.pack_start(self._back_btn)
+
+        self._next_btn = Gtk.Button(label="Next")
+        self._next_btn.add_css_class("suggested-action")
+        self._next_btn.connect("clicked", self._go_next)
+        header.pack_end(self._next_btn)
+
+        # Progress dots
+        self._dots_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=8,
+            halign=Gtk.Align.CENTER,
+        )
+        for i in range(len(self._pages)):
+            dot = Gtk.Label(label="\u25CF" if i == 0 else "\u25CB")
+            dot.add_css_class("dim-label")
+            self._dots_box.append(dot)
+
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_box.append(header)
+        main_box.append(self._stack)
+        main_box.append(Gtk.Separator())
+        self._dots_box.set_margin_top(12)
+        self._dots_box.set_margin_bottom(12)
+        main_box.append(self._dots_box)
+
+        self.set_content(main_box)
+        self._update_nav()
+
+    def _make_page(self, icon_name, title, description):
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=16,
+            margin_top=32,
+            margin_bottom=16,
+            margin_start=24,
+            margin_end=24,
+            vexpand=True,
+        )
+
+        icon = Gtk.Image.new_from_icon_name(icon_name)
+        icon.set_pixel_size(64)
+        icon.add_css_class("dim-label")
+        box.append(icon)
+
+        lbl_title = Gtk.Label(label=title)
+        lbl_title.add_css_class("title-1")
+        box.append(lbl_title)
+
+        lbl_desc = Gtk.Label(
+            label=description,
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+            max_width_chars=60,
+        )
+        lbl_desc.add_css_class("body")
+        box.append(lbl_desc)
+
+        # Wrap in a scrolled window
+        scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        scroll.set_child(box)
+        return scroll
+
+    def _update_nav(self):
+        self._back_btn.set_visible(self._current > 0)
+        is_last = self._current == len(self._pages) - 1
+        self._next_btn.set_label("Finish" if is_last else "Next")
+
+        # Update dots
+        child = self._dots_box.get_first_child()
+        idx = 0
+        while child:
+            child.set_label("\u25CF" if idx == self._current else "\u25CB")
+            child = child.get_next_sibling()
+            idx += 1
+
+    def _go_next(self, _btn=None):
+        if self._current == len(self._pages) - 1:
+            self._finish()
+            return
+        self._current += 1
+        self._stack.set_visible_child_name(self._pages[self._current])
+        self._update_nav()
+
+    def _go_back(self, _btn=None):
+        if self._current > 0:
+            self._current -= 1
+            self._stack.set_visible_child_name(self._pages[self._current])
+            self._update_nav()
+
+    def _on_add_group(self, btn):
+        btn.set_sensitive(False)
+        if add_to_input_group():
+            self._group_status.set_label("Added! You need to log out and back in for this to take effect.")
+            self._group_status.remove_css_class("error")
+            self._group_status.add_css_class("success")
+        else:
+            self._group_status.set_label("Failed. Try running: sudo usermod -aG input $USER")
+            self._group_status.remove_css_class("success")
+            self._group_status.add_css_class("error")
+            btn.set_sensitive(True)
+
+    def _on_enable_ext(self, btn):
+        btn.set_sensitive(False)
+        if enable_extension():
+            self._ext_status.set_label("Extension enabled!")
+            self._ext_status.remove_css_class("error")
+            self._ext_status.add_css_class("success")
+        else:
+            self._ext_status.set_label("Failed. Try: gnome-extensions enable switchamba@vovkes")
+            self._ext_status.remove_css_class("success")
+            self._ext_status.add_css_class("error")
+            btn.set_sensitive(True)
+
+    def _on_start_service(self, btn):
+        btn.set_sensitive(False)
+        if enable_and_start_service():
+            self._start_status.set_label("Service started and enabled on login!")
+            self._start_status.remove_css_class("error")
+            self._start_status.add_css_class("success")
+        else:
+            self._start_status.set_label("Failed to start service. Check: systemctl --user status switchamba")
+            self._start_status.remove_css_class("success")
+            self._start_status.add_css_class("error")
+            btn.set_sensitive(True)
+
+    def _finish(self):
+        # Save Bedrock config if credentials were entered
+        key = self._key_row.get_text().strip()
+        secret = self._secret_row.get_text().strip()
+        region = self._region_row.get_text().strip()
+        model = self._model_row.get_text().strip()
+
+        if key and secret:
+            config = load_config()
+            config.setdefault("bedrock", {})
+            config["bedrock"]["enabled"] = True
+            config["bedrock"]["aws_region"] = region
+
+            # Save credentials to environment file
+            env_dir = CONFIG_DIR
+            env_dir.mkdir(parents=True, exist_ok=True)
+            env_file = env_dir / "bedrock.env"
+            with open(env_file, "w") as f:
+                f.write(f"AWS_ACCESS_KEY_ID={key}\n")
+                f.write(f"AWS_SECRET_ACCESS_KEY={secret}\n")
+                f.write(f"AWS_REGION={region}\n")
+                if model:
+                    f.write(f"BEDROCK_MODEL_QUICK={model}\n")
+            os.chmod(env_file, 0o600)
+
+            save_config(config)
+
+        self.close()
+        if self._on_finish:
+            self._on_finish()
+
+
+# ---------------------------------------------------------------------------
+# Settings Window (launched from app menu after initial setup)
+# ---------------------------------------------------------------------------
+
+class SettingsWindow(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(
+            application=app,
+            title="Switchamba Settings",
+            default_width=550,
+            default_height=600,
+        )
+        self._build_ui()
+
+    def _build_ui(self):
+        config = load_config()
+        running = is_service_running()
+        enabled = is_service_enabled()
+
+        header = Adw.HeaderBar()
+
+        content = Adw.PreferencesPage()
+
+        # --- Service Status ---
+        svc_group = Adw.PreferencesGroup(title="Service")
+
+        self._status_row = Adw.ActionRow(
+            title="Switchamba Service",
+            subtitle="Running" if running else "Stopped",
+        )
+        status_icon = Gtk.Image.new_from_icon_name(
+            "emblem-ok-symbolic" if running else "media-playback-stop-symbolic"
+        )
+        if running:
+            status_icon.add_css_class("success")
+        else:
+            status_icon.add_css_class("error")
+        self._status_row.add_prefix(status_icon)
+
+        self._toggle_btn = Gtk.Button(label="Stop" if running else "Start")
+        self._toggle_btn.set_valign(Gtk.Align.CENTER)
+        if running:
+            self._toggle_btn.add_css_class("destructive-action")
+        else:
+            self._toggle_btn.add_css_class("suggested-action")
+        self._toggle_btn.connect("clicked", self._on_toggle_service)
+        self._status_row.add_suffix(self._toggle_btn)
+
+        svc_group.add(self._status_row)
+
+        autostart_row = Adw.SwitchRow(
+            title="Start on Login",
+            subtitle="Enable systemd user service",
+            active=enabled,
+        )
+        autostart_row.connect("notify::active", self._on_autostart_toggled)
+        svc_group.add(autostart_row)
+        content.add(svc_group)
+
+        # --- Detection ---
+        det_group = Adw.PreferencesGroup(title="Detection")
+        det_cfg = config.get("detection", {})
+
+        self._threshold_row = Adw.SpinRow.new_with_range(0.1, 1.0, 0.05)
+        self._threshold_row.set_title("Score Threshold")
+        self._threshold_row.set_subtitle("Minimum confidence to trigger a switch")
+        self._threshold_row.set_value(det_cfg.get("score_threshold", 0.3))
+        det_group.add(self._threshold_row)
+
+        self._buffer_row = Adw.SpinRow.new_with_range(3, 20, 1)
+        self._buffer_row.set_title("Buffer Size")
+        self._buffer_row.set_subtitle("Number of recent words to consider")
+        self._buffer_row.set_value(det_cfg.get("buffer_size", 8))
+        det_group.add(self._buffer_row)
+
+        self._minchars_row = Adw.SpinRow.new_with_range(2, 8, 1)
+        self._minchars_row.set_title("Min Characters")
+        self._minchars_row.set_subtitle("Minimum word length before analysis")
+        self._minchars_row.set_value(det_cfg.get("min_chars", 3))
+        det_group.add(self._minchars_row)
+
+        content.add(det_group)
+
+        # --- Switching ---
+        sw_group = Adw.PreferencesGroup(title="Switching")
+        sw_cfg = config.get("switching", {})
+
+        self._debounce_row = Adw.SpinRow.new_with_range(100, 1000, 50)
+        self._debounce_row.set_title("Debounce (ms)")
+        self._debounce_row.set_subtitle("Minimum interval between layout switches")
+        self._debounce_row.set_value(sw_cfg.get("debounce_ms", 300))
+        sw_group.add(self._debounce_row)
+
+        content.add(sw_group)
+
+        # --- Bedrock ---
+        br_group = Adw.PreferencesGroup(title="AWS Bedrock")
+        br_cfg = config.get("bedrock", {})
+
+        self._bedrock_switch = Adw.SwitchRow(
+            title="Enable Bedrock",
+            subtitle="Use Claude for disambiguation and line correction",
+            active=br_cfg.get("enabled", True),
+        )
+        br_group.add(self._bedrock_switch)
+
+        self._br_region = Adw.EntryRow(title="AWS Region")
+        self._br_region.set_text(br_cfg.get("aws_region", "eu-central-1"))
+        br_group.add(self._br_region)
+
+        self._br_timeout = Adw.SpinRow.new_with_range(500, 10000, 100)
+        self._br_timeout.set_title("Timeout (ms)")
+        self._br_timeout.set_value(br_cfg.get("timeout_ms", 2000))
+        br_group.add(self._br_timeout)
+
+        content.add(br_group)
+
+        # --- System ---
+        sys_group = Adw.PreferencesGroup(title="System")
+
+        group_row = Adw.ActionRow(
+            title="Input Group",
+            subtitle="In group" if is_in_input_group() else "Not in group (required)",
+        )
+        group_icon = Gtk.Image.new_from_icon_name(
+            "emblem-ok-symbolic" if is_in_input_group() else "dialog-warning-symbolic"
+        )
+        group_row.add_prefix(group_icon)
+        sys_group.add(group_row)
+
+        ext_row = Adw.ActionRow(
+            title="GNOME Extension",
+            subtitle="Enabled" if is_extension_enabled() else "Disabled",
+        )
+        ext_icon = Gtk.Image.new_from_icon_name(
+            "emblem-ok-symbolic" if is_extension_enabled() else "dialog-warning-symbolic"
+        )
+        ext_row.add_prefix(ext_icon)
+        sys_group.add(ext_row)
+
+        log_row = Adw.ActionRow(title="View Logs")
+        log_row.set_activatable(True)
+        log_row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        log_row.connect("activated", self._on_view_logs)
+        sys_group.add(log_row)
+
+        content.add(sys_group)
+
+        # --- Save button ---
+        save_group = Adw.PreferencesGroup()
+        save_btn = Gtk.Button(label="Save Settings")
+        save_btn.add_css_class("suggested-action")
+        save_btn.add_css_class("pill")
+        save_btn.set_halign(Gtk.Align.CENTER)
+        save_btn.set_margin_top(8)
+        save_btn.set_margin_bottom(8)
+        save_btn.connect("clicked", self._on_save)
+        save_group.add(save_btn)
+        content.add(save_group)
+
+        # Layout
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(content)
+
+        self.set_content(toolbar)
+
+    def _on_toggle_service(self, btn):
+        if is_service_running():
+            stop_service()
+            btn.set_label("Start")
+            btn.remove_css_class("destructive-action")
+            btn.add_css_class("suggested-action")
+            self._status_row.set_subtitle("Stopped")
+        else:
+            enable_and_start_service()
+            btn.set_label("Stop")
+            btn.remove_css_class("suggested-action")
+            btn.add_css_class("destructive-action")
+            self._status_row.set_subtitle("Running")
+
+    def _on_autostart_toggled(self, row, _param):
+        if row.get_active():
+            subprocess.run(
+                ["systemctl", "--user", "enable", SERVICE_NAME],
+                capture_output=True, timeout=5,
+            )
+        else:
+            subprocess.run(
+                ["systemctl", "--user", "disable", SERVICE_NAME],
+                capture_output=True, timeout=5,
+            )
+
+    def _on_view_logs(self, _row):
+        subprocess.Popen(
+            ["gnome-terminal", "--", "journalctl", "--user", "-u", SERVICE_NAME, "-f"],
+        )
+
+    def _on_save(self, _btn):
+        config = load_config()
+
+        config["detection"] = {
+            "score_threshold": round(self._threshold_row.get_value(), 2),
+            "buffer_size": int(self._buffer_row.get_value()),
+            "min_chars": int(self._minchars_row.get_value()),
+        }
+
+        config["switching"] = {
+            "debounce_ms": int(self._debounce_row.get_value()),
+        }
+
+        config["bedrock"] = config.get("bedrock", {})
+        config["bedrock"]["enabled"] = self._bedrock_switch.get_active()
+        config["bedrock"]["aws_region"] = self._br_region.get_text().strip()
+        config["bedrock"]["timeout_ms"] = int(self._br_timeout.get_value())
+
+        save_config(config)
+
+        # Restart service to pick up new config
+        if is_service_running():
+            subprocess.run(
+                ["systemctl", "--user", "restart", SERVICE_NAME],
+                capture_output=True, timeout=10,
+            )
+
+        dialog = Adw.AlertDialog(
+            heading="Settings Saved",
+            body="Configuration has been saved and the service restarted.",
+        )
+        dialog.add_response("ok", "OK")
+        dialog.present(self)
+
+
+# ---------------------------------------------------------------------------
+# Application
+# ---------------------------------------------------------------------------
+
+class SwitchambaApp(Adw.Application):
+    def __init__(self, first_run=False):
+        super().__init__(
+            application_id="com.switchamba.Setup",
+            flags=Gio.ApplicationFlags.FLAGS_NONE,
+        )
+        self._first_run = first_run
+
+    def do_activate(self):
+        splash = SplashScreen(self, on_done=self._after_splash)
+        splash.present()
+
+    def _after_splash(self):
+        if self._first_run:
+            win = SetupWizard(self, on_finish=self._on_wizard_done)
+        else:
+            win = SettingsWindow(self)
+        win.present()
+
+    def _on_wizard_done(self):
+        # After wizard, open settings window
+        win = SettingsWindow(self)
+        win.present()
+
+
+def main():
+    first_run = "--first-run" in sys.argv
+    app = SwitchambaApp(first_run=first_run)
+    app.run([] if first_run else sys.argv)
+
+
+if __name__ == "__main__":
+    main()

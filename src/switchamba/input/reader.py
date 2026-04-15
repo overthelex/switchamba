@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 # Sentinel scancode emitted on double-Ctrl tap
 DOUBLE_CTRL_SCANCODE = -1
+# Sentinel scancode emitted on double-Alt tap
+DOUBLE_ALT_SCANCODE = -2
 
 
 @dataclass
@@ -74,6 +76,9 @@ class KeystrokeReader:
         self._ctrl_held = False
         self._ctrl_other_key = False  # True if non-modifier pressed while Ctrl held
         self._last_ctrl_tap: float = 0.0  # monotonic time of last clean Ctrl tap
+        self._alt_held = False
+        self._alt_other_key = False  # True if non-modifier pressed while Alt held
+        self._last_alt_tap: float = 0.0  # monotonic time of last clean Alt tap
         self._running = False
         self._suppress_until: float = 0.0  # Ignore events until this timestamp
         self._pending_scancodes: list[tuple[int, bool]] = []  # Collected during suppress
@@ -168,6 +173,10 @@ class KeystrokeReader:
                         self._ctrl_held = key_event_raw.keystate in (
                             key_event_raw.key_down, key_event_raw.key_hold,
                         )
+                    if event.code in (ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT):
+                        self._alt_held = key_event_raw.keystate in (
+                            key_event_raw.key_down, key_event_raw.key_hold,
+                        )
                     continue
 
                 key_event = evdev.categorize(event)
@@ -205,9 +214,36 @@ class KeystrokeReader:
                             self._last_ctrl_tap = now
                     continue
 
-                # Mark if non-modifier key pressed while Ctrl held
+                # Track alt state and detect double-tap
+                if event.code in (ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT):
+                    was_held = self._alt_held
+                    self._alt_held = key_event.keystate in (
+                        key_event.key_down,
+                        key_event.key_hold,
+                    )
+                    if key_event.keystate == key_event.key_down:
+                        self._alt_other_key = False
+                    elif was_held and not self._alt_held and not self._alt_other_key:
+                        # Clean Alt release (no other key pressed during hold)
+                        import time as _t3
+                        now = _t3.monotonic()
+                        if now - self._last_alt_tap < 0.4:
+                            self._last_alt_tap = 0.0
+                            ke = KeyEvent(
+                                scancode=DOUBLE_ALT_SCANCODE,
+                                pressed=True, shifted=False, ctrl=False,
+                                timestamp=event.timestamp(),
+                            )
+                            await queue.put(ke)
+                        else:
+                            self._last_alt_tap = now
+                    continue
+
+                # Mark if non-modifier key pressed while Ctrl or Alt held
                 if self._ctrl_held and key_event.keystate == key_event.key_down:
                     self._ctrl_other_key = True
+                if self._alt_held and key_event.keystate == key_event.key_down:
+                    self._alt_other_key = True
 
                 # Only process key-down events for mapped or edit keys
                 if key_event.keystate != key_event.key_down:
