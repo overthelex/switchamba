@@ -1,0 +1,9 @@
+switchamba (0.1.0-1) noble; urgency=medium
+
+  * Initial release.
+  * Automatic EN/RU/UA keyboard layout detection and switching.
+  * GNOME Shell extension for D-Bus layout control.
+  * GTK4/Adwaita setup wizard and settings UI.
+  * Systemd user service integration.
+
+ -- Vovkes <shepherdvovkes@gmail.com>  Tue, 15 Apr 2026 12:00:00 +0300

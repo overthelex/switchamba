@@ -12,7 +12,7 @@ from evdev import ecodes
 
 from ..input.keymap import (
     EN, RU, UA, LAYOUTS,
-    ALPHA_SCANCODES, WORD_BOUNDARY_SCANCODES, EDIT_SCANCODES,
+    ALPHA_SCANCODES, DIGIT_SCANCODES, WORD_BOUNDARY_SCANCODES, EDIT_SCANCODES,
     RU_EXCLUSIVE_SCANCODES, KEYMAP,
     scancodes_to_text,
 )
@@ -60,6 +60,8 @@ class LanguageDetector:
     def __init__(self):
         self._word_scancodes: list[int] = []
         self._word_shifts: list[bool] = []
+        self._last_word_scancodes: list[int] = []
+        self._last_word_shifts: list[bool] = []
         self._dictionary = DictionaryMatcher()
         self._current_layout: str = EN
         self._preferred_cyrillic: str = RU
@@ -82,6 +84,8 @@ class LanguageDetector:
 
         # Word boundary — analyze completed word
         if scancode in WORD_BOUNDARY_SCANCODES:
+            self._last_word_scancodes = self._word_scancodes.copy()
+            self._last_word_shifts = self._word_shifts.copy()
             detection = self._analyze_word()
             self._word_scancodes.clear()
             self._word_shifts.clear()
@@ -99,8 +103,9 @@ class LanguageDetector:
                 self.reset()
             return None
 
-        # Collect alpha keys into current word
-        if scancode in ALPHA_SCANCODES:
+        # Collect all mapped keys into word buffer (alpha, digits, punctuation)
+        # so that URLs like "legal.org.ua/blog" are replayed intact
+        if scancode in KEYMAP:
             self._word_scancodes.append(scancode)
             self._word_shifts.append(shifted)
 
@@ -108,7 +113,8 @@ class LanguageDetector:
 
     def _analyze_word(self) -> Detection | None:
         """Analyze completed word and decide if layout switch is needed."""
-        if len(self._word_scancodes) < MIN_WORD_LENGTH:
+        alpha_count = sum(1 for sc in self._word_scancodes if sc in ALPHA_SCANCODES)
+        if alpha_count < MIN_WORD_LENGTH:
             return None
 
         scancodes = self._word_scancodes.copy()

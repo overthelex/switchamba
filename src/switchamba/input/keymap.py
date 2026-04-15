@@ -92,6 +92,13 @@ ALPHA_SCANCODES = {
     if any(maps[lang][0].isalpha() for lang in (EN, RU, UA) if lang in maps)
 }
 
+# Digit scancodes — same char in all layouts, but must be kept in word buffer
+# so abbreviations like E2E, B2B, i18n are replayed correctly
+DIGIT_SCANCODES = {
+    ecodes.KEY_1, ecodes.KEY_2, ecodes.KEY_3, ecodes.KEY_4, ecodes.KEY_5,
+    ecodes.KEY_6, ecodes.KEY_7, ecodes.KEY_8, ecodes.KEY_9, ecodes.KEY_0,
+}
+
 # Word boundary keys
 WORD_BOUNDARY_SCANCODES = {
     ecodes.KEY_SPACE,

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Switchamba Settings
+GenericName=Keyboard Layout Switcher
+Comment=Configure automatic EN/RU/UA keyboard layout switching
+Exec=switchamba-setup
+Icon=switchamba
+Terminal=false
+Type=Application
+Categories=Settings;HardwareSettings;
+Keywords=keyboard;layout;language;switch;russian;ukrainian;
+StartupNotify=true

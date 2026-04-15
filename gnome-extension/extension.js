@@ -22,6 +22,15 @@ const IFACE = `
   </interface>
 </node>`;
 
+const WINDOW_IFACE = `
+<node>
+  <interface name="com.switchamba.WindowInfo">
+    <method name="GetFocusedApp">
+      <arg type="s" direction="out" name="wm_class"/>
+    </method>
+  </interface>
+</node>`;
+
 // Colors for each layout
 const LAYOUT_COLORS = {
     0: '#6AACF0', // EN - blue
@@ -36,7 +45,31 @@ const LAYOUT_LABELS = {
 };
 
 let _dbus = null;
+let _windowDbus = null;
 let _indicator = null;
+
+class WindowInfoDBus {
+    constructor() {
+        this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(WINDOW_IFACE, this);
+        this._dbusImpl.export(Gio.DBus.session, '/com/switchamba/WindowInfo');
+    }
+
+    GetFocusedApp() {
+        try {
+            const win = global.display.focus_window;
+            if (win) {
+                return win.get_wm_class() || '';
+            }
+            return '';
+        } catch(e) {
+            return '';
+        }
+    }
+
+    destroy() {
+        this._dbusImpl.unexport();
+    }
+}
 
 class LayoutSwitcherDBus {
     constructor() {
@@ -73,6 +106,18 @@ class LayoutSwitcherDBus {
     SetActive(active) {
         if (_indicator)
             _indicator.setActive(active);
+    }
+
+    GetFocusedApp() {
+        try {
+            const win = global.display.focus_window;
+            if (win) {
+                return win.get_wm_class() || '';
+            }
+            return '';
+        } catch(e) {
+            return '';
+        }
     }
 
     destroy() {
@@ -149,12 +194,17 @@ class SwitchambaIndicator extends PanelMenu.Button {
 export default class SwitchambaExtension {
     enable() {
         _dbus = new LayoutSwitcherDBus();
+        _windowDbus = new WindowInfoDBus();
         _indicator = new SwitchambaIndicator();
         // Add to right side of panel, position 1 (next to keyboard indicator)
         Main.panel.addToStatusArea('switchamba', _indicator, 1, 'right');
     }
 
     disable() {
+        if (_windowDbus) {
+            _windowDbus.destroy();
+            _windowDbus = null;
+        }
         if (_dbus) {
             _dbus.destroy();
             _dbus = null;

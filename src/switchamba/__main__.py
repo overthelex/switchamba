@@ -10,13 +10,50 @@ import sys
 
 from .config import load_config
 from .detection.detector import LanguageDetector, Confidence
-from .input.reader import KeystrokeReader, DOUBLE_CTRL_SCANCODE
+from .input.reader import KeystrokeReader, DOUBLE_CTRL_SCANCODE, DOUBLE_ALT_SCANCODE
 from .input.keymap import scancodes_to_text, WORD_BOUNDARY_SCANCODES
 from .switching.switcher import LayoutSwitcher
 
 logger = logging.getLogger("switchamba")
 
 _bedrock_client = None
+
+# Terminal apps where Shift+Home / Ctrl+C behave differently
+_TERMINAL_WM_CLASSES = frozenset({
+    "gnome-terminal", "gnome-terminal-server",
+    "kitty", "alacritty", "foot", "wezterm",
+    "konsole", "xterm", "tilix", "terminator",
+    "org.gnome.terminal", "com.raggesilver.blackbox",
+    "org.wezfurlong.wezterm",
+})
+
+
+async def _get_focused_wm_class() -> str | None:
+    """Get WM_CLASS of the focused window via switchamba GNOME extension D-Bus."""
+    try:
+        from .switching.switcher import DBUS_DEST
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: __import__("subprocess").run(
+                [
+                    "gdbus", "call", "--session",
+                    "--dest", DBUS_DEST,
+                    "--object-path", "/com/switchamba/WindowInfo",
+                    "--method", "com.switchamba.WindowInfo.GetFocusedApp",
+                ],
+                capture_output=True, text=True, timeout=2,
+            ),
+        )
+        if result.returncode == 0:
+            # Output: ('gnome-terminal-server',)
+            out = result.stdout.strip()
+            import re
+            m = re.search(r"'(.+?)'", out)
+            if m:
+                return m.group(1).lower()
+    except Exception as e:
+        logger.debug("Could not get focused window class: %s", e)
+    return None
 
 
 async def _init_bedrock(config):
@@ -41,6 +78,11 @@ async def run(config) -> None:
     # Stats tracking
     stats = {"ngram": 0, "dict": 0, "script_family": 0, "bedrock": 0, "total": 0}
 
+    # Double-Alt reliteration cycle: RU → UA → EN → RU ...
+    reliterate_cycle = ["ru", "ua", "en"]
+    reliterate_idx = 0  # current position in cycle
+    reliterate_last_scancodes: list[int] = []  # scancodes of word being cycled
+
     await switcher.initialize()
     detector.current_layout = switcher.current_layout
 
@@ -63,6 +105,48 @@ async def run(config) -> None:
             # Double-Ctrl: select line left of cursor, send to Bedrock for correction
             if key_event.scancode == DOUBLE_CTRL_SCANCODE:
                 await _handle_line_correction(reader, switcher, detector)
+                continue
+
+            # Double-Alt: cycle last word through RU → UA → EN
+            if key_event.scancode == DOUBLE_ALT_SCANCODE:
+                word_sc = detector._last_word_scancodes
+                word_sh = detector._last_word_shifts
+                if not word_sc:
+                    continue
+
+                # First tap on a new word — start cycle from current layout
+                if word_sc != reliterate_last_scancodes:
+                    reliterate_last_scancodes = word_sc.copy()
+                    try:
+                        reliterate_idx = reliterate_cycle.index(detector.current_layout)
+                    except ValueError:
+                        reliterate_idx = 0
+
+                # Advance to next language in cycle
+                reliterate_idx = (reliterate_idx + 1) % len(reliterate_cycle)
+                target = reliterate_cycle[reliterate_idx]
+
+                old_text = scancodes_to_text(word_sc, detector.current_layout, word_sh)
+                new_text = scancodes_to_text(word_sc, target, word_sh)
+
+                # Delete word + trailing boundary char
+                delete_count = len(word_sc) + 1
+                suppress_time = delete_count * 0.02 + 0.15 + len(word_sc) * 0.02 + 0.1
+                reader.suppress(suppress_time)
+
+                corrected = await switcher.backspace_and_switch(target, delete_count)
+                if corrected:
+                    await switcher.replay_scancodes(word_sc, word_sh)
+                    # Re-type boundary (space)
+                    from evdev import ecodes as _ec
+                    await switcher.replay_scancodes([_ec.KEY_SPACE], [False])
+                    detector.current_layout = target
+                    logger.info(
+                        "[double-alt] '%s' → '%s' (%s)",
+                        old_text, new_text, target,
+                    )
+
+                reader.drain_pending()
                 continue
 
             detection = detector.on_key(key_event.scancode, key_event.shifted, key_event.ctrl)
@@ -154,6 +238,12 @@ async def _handle_line_correction(reader, switcher, detector) -> None:
     """Handle double-Ctrl: select line left of cursor, correct via Bedrock Sonnet."""
     if _bedrock_client is None:
         logger.debug("Double-Ctrl ignored: Bedrock not configured")
+        return
+
+    # Skip in terminal apps where Shift+Home/Ctrl+C don't work as expected
+    wm_class = await _get_focused_wm_class()
+    if wm_class and wm_class in _TERMINAL_WM_CLASSES:
+        logger.info("Double-Ctrl ignored: terminal app '%s'", wm_class)
         return
 
     # Suppress reader during the entire operation

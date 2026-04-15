@@ -5,11 +5,10 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/switchamba/.venv/bin/python -m switchamba
+ExecStart=/usr/bin/switchamba
 Restart=on-failure
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
-# User must be in 'input' group for evdev/uinput access
 
 [Install]
 WantedBy=graphical-session.target
