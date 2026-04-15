@@ -6,6 +6,9 @@ export PYBUILD_NAME = switchamba
 %:
 	dh $@ --with python3 --buildsystem=pybuild
 
+override_dh_auto_test:
+	@echo "Skipping tests (require evdev hardware access)"
+
 override_dh_auto_install:
 	dh_auto_install
 
@@ -17,6 +20,8 @@ override_dh_auto_install:
 		debian/switchamba/usr/share/gnome-shell/extensions/switchamba@vovkes/
 	install -m 644 gnome-extension/icon.svg \
 		debian/switchamba/usr/share/gnome-shell/extensions/switchamba@vovkes/
+	install -m 644 icons/switchamba-32.png \
+		debian/switchamba/usr/share/gnome-shell/extensions/switchamba@vovkes/icon.png
 
 	# Install systemd user service
 	install -d debian/switchamba/usr/lib/systemd/user
@@ -33,15 +38,38 @@ override_dh_auto_install:
 	install -m 644 debian/switchamba-setup.desktop \
 		debian/switchamba/usr/share/applications/
 
-	# Install app icon
+	# Install app icons (dark/teal for light themes) into hicolor
+	for size in 16 24 32 48 64 128 256 512; do \
+		install -d debian/switchamba/usr/share/icons/hicolor/$${size}x$${size}/apps; \
+		install -m 644 icons/switchamba-$${size}.png \
+			debian/switchamba/usr/share/icons/hicolor/$${size}x$${size}/apps/switchamba.png; \
+	done
 	install -d debian/switchamba/usr/share/icons/hicolor/scalable/apps
 	install -m 644 icon.svg \
 		debian/switchamba/usr/share/icons/hicolor/scalable/apps/switchamba.svg
 
-	# Install the setup UI script
+	# Install light (white) icons for dark themes
+	for size in 16 24 32 48 64 128 256 512; do \
+		install -d debian/switchamba/usr/share/icons/hicolor/$${size}x$${size}/apps; \
+		install -m 644 icons/switchamba-white-$${size}.png \
+			debian/switchamba/usr/share/icons/hicolor/$${size}x$${size}/apps/switchamba-light.png; \
+	done
+
+	# Install pixmap fallback
+	install -d debian/switchamba/usr/share/pixmaps
+	install -m 644 icons/switchamba-256.png \
+		debian/switchamba/usr/share/pixmaps/switchamba.png
+
+	# Install the setup UI script, splash logo, and icon variants
 	install -d debian/switchamba/usr/share/switchamba
 	install -m 755 switchamba-setup \
 		debian/switchamba/usr/share/switchamba/switchamba-setup
+	install -m 644 icon-transparent.png \
+		debian/switchamba/usr/share/switchamba/icon-transparent.png
+	install -m 644 icons/switchamba-white.png \
+		debian/switchamba/usr/share/switchamba/icon-white.png
+	install -m 644 icons/switchamba-128.png \
+		debian/switchamba/usr/share/switchamba/icon-128.png
 
 	# Install the launcher wrapper
 	install -d debian/switchamba/usr/bin

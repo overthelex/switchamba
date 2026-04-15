@@ -212,7 +212,7 @@ class SplashScreen(Adw.Window):
             application=app,
             title="Switchamba",
             default_width=520,
-            default_height=400,
+            default_height=480,
             resizable=False,
             decorated=False,
             modal=True,
@@ -255,34 +255,29 @@ class SplashScreen(Adw.Window):
             margin_end=40,
         )
 
-        # Layout indicators: A -> Я -> І
-        layout_box = Gtk.Box(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            spacing=12,
-            halign=Gtk.Align.CENTER,
-            margin_bottom=20,
-        )
-        en_lbl = Gtk.Label(label="A")
-        en_lbl.add_css_class("splash-layout-en")
-        arrow1 = Gtk.Label(label="\u2192")
-        arrow1.add_css_class("splash-arrow")
-        ru_lbl = Gtk.Label(label="\u042F")
-        ru_lbl.add_css_class("splash-layout-ru")
-        arrow2 = Gtk.Label(label="\u2192")
-        arrow2.add_css_class("splash-arrow")
-        ua_lbl = Gtk.Label(label="\u0406")
-        ua_lbl.add_css_class("splash-layout-ua")
-        layout_box.append(en_lbl)
-        layout_box.append(arrow1)
-        layout_box.append(ru_lbl)
-        layout_box.append(arrow2)
-        layout_box.append(ua_lbl)
-        content.append(layout_box)
+        # Logo
+        logo_paths = [
+            "/usr/share/switchamba/icon-transparent.png",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon-transparent.png"),
+        ]
+        logo_path = None
+        for p in logo_paths:
+            if os.path.exists(p):
+                logo_path = p
+                break
 
-        # Title
-        title = Gtk.Label(label="SWITCHAMBA")
-        title.add_css_class("splash-title")
-        content.append(title)
+        if logo_path:
+            logo = Gtk.Picture.new_for_filename(logo_path)
+            logo.set_size_request(200, 180)
+            logo.set_halign(Gtk.Align.CENTER)
+            logo.set_content_fit(Gtk.ContentFit.CONTAIN)
+            logo.set_margin_bottom(12)
+            content.append(logo)
+        else:
+            # Fallback: text title
+            title = Gtk.Label(label="SWITCHAMBA")
+            title.add_css_class("splash-title")
+            content.append(title)
 
         # Subtitle
         subtitle = Gtk.Label(label="LAYOUT INTELLIGENCE")
@@ -375,9 +370,27 @@ class SetupWizard(Adw.Window):
             description=(
                 "Switchamba automatically detects which language you are typing "
                 "and switches your keyboard layout between English, Russian, and Ukrainian.\n\n"
-                "This wizard will help you complete the initial setup."
+                "Press Install to set up everything automatically."
             ),
         )
+        welcome_box = welcome._inner_box
+
+        self._install_btn = Gtk.Button(label="Install")
+        self._install_btn.add_css_class("suggested-action")
+        self._install_btn.add_css_class("pill")
+        self._install_btn.set_halign(Gtk.Align.CENTER)
+        self._install_btn.set_margin_top(8)
+        self._install_btn.connect("clicked", self._on_install)
+        welcome_box.append(self._install_btn)
+
+        self._install_status = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=6,
+            halign=Gtk.Align.CENTER,
+            margin_top=12,
+        )
+        welcome_box.append(self._install_status)
+
         self._stack.add_named(welcome, "welcome")
         self._pages.append("welcome")
 
@@ -404,14 +417,14 @@ class SetupWizard(Adw.Window):
             self._group_btn.connect("clicked", self._on_add_group)
             self._group_status = Gtk.Label(label="")
             self._group_status.add_css_class("dim-label")
-            box = group_page.get_first_child()  # the main box
+            box = group_page._inner_box
             box.append(self._group_btn)
             box.append(self._group_status)
         else:
             check_label = Gtk.Label(label="  Already configured")
             check_label.add_css_class("success")
             check_label.set_halign(Gtk.Align.CENTER)
-            box = group_page.get_first_child()
+            box = group_page._inner_box
             box.append(check_label)
 
         self._stack.add_named(group_page, "group")
@@ -440,14 +453,14 @@ class SetupWizard(Adw.Window):
             self._ext_btn.connect("clicked", self._on_enable_ext)
             self._ext_status = Gtk.Label(label="")
             self._ext_status.add_css_class("dim-label")
-            box = ext_page.get_first_child()
+            box = ext_page._inner_box
             box.append(self._ext_btn)
             box.append(self._ext_status)
         else:
             check_label = Gtk.Label(label="  Already enabled")
             check_label.add_css_class("success")
             check_label.set_halign(Gtk.Align.CENTER)
-            box = ext_page.get_first_child()
+            box = ext_page._inner_box
             box.append(check_label)
 
         self._stack.add_named(ext_page, "extension")
@@ -464,7 +477,7 @@ class SetupWizard(Adw.Window):
             ),
         )
 
-        bedrock_box = bedrock_page.get_first_child()
+        bedrock_box = bedrock_page._inner_box
 
         config = load_config()
         bedrock_cfg = config.get("bedrock", {})
@@ -511,7 +524,7 @@ class SetupWizard(Adw.Window):
             ),
         )
 
-        start_box = start_page.get_first_child()
+        start_box = start_page._inner_box
 
         self._start_btn = Gtk.Button(label="Enable & Start Service")
         self._start_btn.add_css_class("suggested-action")
@@ -593,6 +606,7 @@ class SetupWizard(Adw.Window):
         # Wrap in a scrolled window
         scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         scroll.set_child(box)
+        scroll._inner_box = box
         return scroll
 
     def _update_nav(self):
@@ -621,6 +635,57 @@ class SetupWizard(Adw.Window):
             self._current -= 1
             self._stack.set_visible_child_name(self._pages[self._current])
             self._update_nav()
+
+    def _add_status_line(self, text, success=True):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, halign=Gtk.Align.CENTER)
+        icon = Gtk.Image.new_from_icon_name(
+            "emblem-ok-symbolic" if success else "dialog-warning-symbolic"
+        )
+        if success:
+            icon.add_css_class("success")
+        else:
+            icon.add_css_class("warning")
+        row.append(icon)
+        row.append(Gtk.Label(label=text))
+        self._install_status.append(row)
+
+    def _on_install(self, btn):
+        btn.set_sensitive(False)
+        btn.set_label("Installing...")
+
+        # 1. Input group
+        if is_in_input_group():
+            self._add_status_line("Input group — already configured")
+        else:
+            if add_to_input_group():
+                self._add_status_line("Input group — added (re-login required)")
+            else:
+                self._add_status_line("Input group — failed, run: sudo usermod -aG input $USER", False)
+
+        # 2. GNOME extension
+        if is_extension_enabled():
+            self._add_status_line("GNOME extension — already enabled")
+        else:
+            if enable_extension():
+                self._add_status_line("GNOME extension — enabled")
+            else:
+                self._add_status_line("GNOME extension — failed to enable", False)
+
+        # 3. Systemd service
+        if enable_and_start_service():
+            self._add_status_line("Service — enabled and started")
+        else:
+            self._add_status_line("Service — failed to start", False)
+
+        btn.set_label("Installed")
+
+        # Add a "Configure" button to go to settings
+        configure_btn = Gtk.Button(label="Configure Settings")
+        configure_btn.add_css_class("pill")
+        configure_btn.set_halign(Gtk.Align.CENTER)
+        configure_btn.set_margin_top(12)
+        configure_btn.connect("clicked", lambda _: self._go_next())
+        self._install_status.append(configure_btn)
 
     def _on_add_group(self, btn):
         btn.set_sensitive(False)
@@ -936,10 +1001,12 @@ class SwitchambaApp(Adw.Application):
         self._first_run = first_run
 
     def do_activate(self):
+        self.hold()
         splash = SplashScreen(self, on_done=self._after_splash)
         splash.present()
 
     def _after_splash(self):
+        self.release()
         if self._first_run:
             win = SetupWizard(self, on_finish=self._on_wizard_done)
         else:

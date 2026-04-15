@@ -10,3 +10,12 @@ build/
 *.log
 .env
 .env.prod
+.pybuild/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/switchamba.postinst.debhelper
+debian/switchamba.postrm.debhelper
+debian/switchamba.prerm.debhelper
+debian/switchamba.substvars
+debian/switchamba/
