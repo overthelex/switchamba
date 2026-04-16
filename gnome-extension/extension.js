@@ -1,9 +1,11 @@
 import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
+import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Keyboard from 'resource:///org/gnome/shell/ui/status/keyboard.js';
 
 const IFACE = `
@@ -149,6 +151,31 @@ class SwitchambaIndicator extends PanelMenu.Button {
         this._box.add_child(this._dot);
 
         this.add_child(this._box);
+
+        // Popup menu
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Switchamba'));
+
+        const settingsItem = new PopupMenu.PopupMenuItem('Settings');
+        settingsItem.connect('activate', () => {
+            try {
+                GLib.spawn_command_line_async('switchamba-setup');
+            } catch(e) {
+                log(`Switchamba: failed to open settings: ${e}`);
+            }
+        });
+        this.menu.addMenuItem(settingsItem);
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        const quitItem = new PopupMenu.PopupMenuItem('Quit');
+        quitItem.connect('activate', () => {
+            try {
+                GLib.spawn_command_line_async('systemctl --user stop switchamba.service');
+            } catch(e) {
+                log(`Switchamba: failed to stop service: ${e}`);
+            }
+        });
+        this.menu.addMenuItem(quitItem);
 
         // Listen for layout changes
         this._ism = Keyboard.getInputSourceManager();
