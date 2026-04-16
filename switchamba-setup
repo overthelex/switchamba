@@ -337,7 +337,7 @@ class SplashScreen(Adw.Window):
     def _close_splash(self):
         self.close()
         if self._on_done:
-            self._on_done()
+            GLib.idle_add(self._on_done)
         return False
 
 
@@ -345,23 +345,159 @@ class SplashScreen(Adw.Window):
 # Setup Wizard (first-run experience)
 # ---------------------------------------------------------------------------
 
-class SetupWizard(Adw.Window):
-    def __init__(self, app, on_finish=None):
+class SetupWizard(Adw.ApplicationWindow):
+    def __init__(self, app, on_finish=None, show_splash=False):
         super().__init__(
             application=app,
             title="Switchamba Setup",
             default_width=600,
-            default_height=500,
+            default_height=620,
             resizable=False,
         )
         self._on_finish = on_finish
+        self._show_splash = show_splash
         self._pages = []
         self._current = 0
 
+        # Load splash CSS
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_string(SPLASH_CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
         self._build_ui()
+
+    def _build_splash_page(self):
+        """Build the splash/branding page as first wizard page."""
+        overlay = Gtk.Overlay()
+
+        bg = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True, hexpand=True)
+        bg.add_css_class("splash-window")
+        overlay.set_child(bg)
+
+        content = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=0,
+            halign=Gtk.Align.CENTER,
+            valign=Gtk.Align.CENTER,
+            margin_start=40,
+            margin_end=40,
+            margin_bottom=40,
+        )
+
+        # Logo
+        logo_paths = [
+            "/usr/share/switchamba/icon-transparent.png",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon-transparent.png"),
+        ]
+        logo_path = None
+        for p in logo_paths:
+            if os.path.exists(p):
+                logo_path = p
+                break
+
+        if logo_path:
+            logo = Gtk.Picture.new_for_filename(logo_path)
+            logo.set_size_request(200, 180)
+            logo.set_halign(Gtk.Align.CENTER)
+            logo.set_content_fit(Gtk.ContentFit.CONTAIN)
+            logo.set_margin_bottom(12)
+            content.append(logo)
+        else:
+            title = Gtk.Label(label="SWITCHAMBA")
+            title.add_css_class("splash-title")
+            content.append(title)
+
+        subtitle = Gtk.Label(label="LAYOUT INTELLIGENCE")
+        subtitle.add_css_class("splash-subtitle")
+        subtitle.set_margin_top(4)
+        content.append(subtitle)
+
+        divider = Gtk.Separator()
+        divider.add_css_class("splash-divider")
+        divider.set_margin_top(24)
+        divider.set_margin_bottom(24)
+        divider.set_size_request(200, -1)
+        divider.set_halign(Gtk.Align.CENTER)
+        content.append(divider)
+
+        authors_label = Gtk.Label(label="CREATED BY")
+        authors_label.add_css_class("splash-version")
+        authors_label.set_margin_bottom(10)
+        content.append(authors_label)
+
+        author1 = Gtk.Label(label="Vladimir Obcharov")
+        author1.add_css_class("splash-author-name")
+        content.append(author1)
+
+        ampersand = Gtk.Label(label="&")
+        ampersand.add_css_class("splash-authors")
+        ampersand.set_margin_top(4)
+        ampersand.set_margin_bottom(4)
+        content.append(ampersand)
+
+        author2 = Gtk.Label(label="Claude Code")
+        author2.add_css_class("splash-author-name")
+        content.append(author2)
+
+        version_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=4,
+            halign=Gtk.Align.CENTER,
+            margin_top=28,
+        )
+        version = Gtk.Label(label="VERSION 0.1.0")
+        version.add_css_class("splash-version")
+        version_box.append(version)
+
+        copyright_lbl = Gtk.Label(label="\u00A9 2024\u20132026  All rights reserved")
+        copyright_lbl.add_css_class("splash-copyright")
+        version_box.append(copyright_lbl)
+
+        content.append(version_box)
+
+        # Next button
+        next_btn = Gtk.Button(label="Next")
+        next_btn.add_css_class("pill")
+        next_btn.set_halign(Gtk.Align.CENTER)
+        next_btn.set_margin_top(20)
+        next_btn.set_css_classes(["pill"])
+        # Style: white text on semi-transparent background
+        btn_css = Gtk.CssProvider()
+        btn_css.load_from_string("""
+            button.splash-next {
+                background: rgba(255,255,255,0.15);
+                color: white;
+                border: 1px solid rgba(255,255,255,0.3);
+                min-width: 120px;
+                font-weight: 600;
+            }
+            button.splash-next:hover {
+                background: rgba(255,255,255,0.25);
+            }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            next_btn.get_display() if hasattr(next_btn, 'get_display') else
+            __import__('gi.repository.Gdk', fromlist=['Gdk']).Gdk.Display.get_default(),
+            btn_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+        next_btn.add_css_class("splash-next")
+        next_btn.connect("clicked", lambda _: self._advance_from_splash())
+        content.append(next_btn)
+
+        overlay.add_overlay(content)
+        return overlay
 
     def _build_ui(self):
         self._stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.SLIDE_LEFT)
+
+        # --- Page 0: Splash (if first run) ---
+        if self._show_splash:
+            splash_page = self._build_splash_page()
+            self._stack.add_named(splash_page, "splash")
+            self._pages.append("splash")
 
         # --- Page 1: Welcome ---
         welcome = self._make_page(
@@ -540,31 +676,32 @@ class SetupWizard(Adw.Window):
         self._pages.append("start")
 
         # --- Navigation ---
-        header = Adw.HeaderBar()
+        self._header = Adw.HeaderBar()
 
         self._back_btn = Gtk.Button(label="Back")
         self._back_btn.connect("clicked", self._go_back)
         self._back_btn.set_visible(False)
-        header.pack_start(self._back_btn)
+        self._header.pack_start(self._back_btn)
 
         self._next_btn = Gtk.Button(label="Next")
         self._next_btn.add_css_class("suggested-action")
         self._next_btn.connect("clicked", self._go_next)
-        header.pack_end(self._next_btn)
+        self._header.pack_end(self._next_btn)
 
-        # Progress dots
+        # Progress dots (exclude splash from dot count)
+        non_splash_pages = [p for p in self._pages if p != "splash"]
         self._dots_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=8,
             halign=Gtk.Align.CENTER,
         )
-        for i in range(len(self._pages)):
+        for i in range(len(non_splash_pages)):
             dot = Gtk.Label(label="\u25CF" if i == 0 else "\u25CB")
             dot.add_css_class("dim-label")
             self._dots_box.append(dot)
 
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        main_box.append(header)
+        main_box.append(self._header)
         main_box.append(self._stack)
         main_box.append(Gtk.Separator())
         self._dots_box.set_margin_top(12)
@@ -609,12 +746,22 @@ class SetupWizard(Adw.Window):
         scroll._inner_box = box
         return scroll
 
+    def _advance_from_splash(self):
+        """Auto-advance from splash page to welcome."""
+        self._go_next()
+        return False
+
     def _update_nav(self):
-        self._back_btn.set_visible(self._current > 0)
+        on_splash = self._show_splash and self._pages[self._current] == "splash"
+        self._header.set_visible(not on_splash)
+        self._back_btn.set_visible(self._current > 0 and not on_splash)
+        self._next_btn.set_visible(not on_splash)
+        self._dots_box.set_visible(not on_splash)
+
         is_last = self._current == len(self._pages) - 1
         self._next_btn.set_label("Finish" if is_last else "Next")
 
-        # Update dots
+        # Update dots (skip splash dot)
         child = self._dots_box.get_first_child()
         idx = 0
         while child:
@@ -996,22 +1143,74 @@ class SwitchambaApp(Adw.Application):
     def __init__(self, first_run=False):
         super().__init__(
             application_id="com.switchamba.Setup",
-            flags=Gio.ApplicationFlags.FLAGS_NONE,
+            flags=Gio.ApplicationFlags.NON_UNIQUE,
         )
         self._first_run = first_run
 
-    def do_activate(self):
-        self.hold()
-        splash = SplashScreen(self, on_done=self._after_splash)
-        splash.present()
+    def _is_already_installed(self):
+        """Check if switchamba is already set up (service enabled or running)."""
+        return is_service_enabled() or is_service_running()
 
-    def _after_splash(self):
-        self.release()
-        if self._first_run:
-            win = SetupWizard(self, on_finish=self._on_wizard_done)
-        else:
-            win = SettingsWindow(self)
+    def _remove_switchamba(self):
+        """Remove switchamba: stop service, disable extension, uninstall package."""
+        stop_service()
+        subprocess.run(
+            ["systemctl", "--user", "disable", SERVICE_NAME],
+            capture_output=True, timeout=5,
+        )
+        subprocess.run(
+            ["gnome-extensions", "disable", EXTENSION_UUID],
+            capture_output=True, timeout=5,
+        )
+        subprocess.Popen(["pkexec", "dpkg", "--remove", "switchamba"])
+
+    def do_activate(self):
+        try:
+            if self._first_run and self._is_already_installed():
+                self._show_already_installed_dialog()
+                return
+            if self._first_run:
+                win = SetupWizard(self, on_finish=self._on_wizard_done, show_splash=True)
+            else:
+                win = SettingsWindow(self)
+            win.present()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"FATAL: {e}", flush=True)
+
+    def _show_already_installed_dialog(self):
+        """Show dialog when app is already installed."""
+        win = Adw.ApplicationWindow(
+            application=self,
+            title="Switchamba",
+            default_width=450,
+            default_height=250,
+        )
         win.present()
+
+        dialog = Adw.AlertDialog(
+            heading="Switchamba is already installed",
+            body="The service is already configured and running. What would you like to do?",
+        )
+        dialog.add_response("quit", "Quit")
+        dialog.add_response("remove", "Remove")
+        dialog.add_response("reinstall", "Reinstall")
+        dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_response_appearance("reinstall", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("quit")
+        dialog.connect("response", self._on_already_installed_response, win)
+        dialog.present(win)
+
+    def _on_already_installed_response(self, dialog, response, win):
+        win.close()
+        if response == "remove":
+            self._remove_switchamba()
+        elif response == "reinstall":
+            win2 = SetupWizard(self, on_finish=self._on_wizard_done, show_splash=True)
+            win2.present()
+            return
+        self.quit()
 
     def _on_wizard_done(self):
         # After wizard, open settings window
