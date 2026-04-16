@@ -94,13 +94,19 @@ async def run(config) -> None:
     await _set_indicator_active(True)
     asyncio.create_task(_poll_layout(detector, switcher))
 
+    # Sync layout before first keystroke
+    actual = await switcher.poll_current()
+    if actual:
+        detector.current_layout = actual
+
     try:
         async for key_event in reader.read_events():
-            # Sync layout at start of each word
-            if len(detector._word_scancodes) == 0:
+            # Sync layout at start of each word or after Ctrl (paste/cut)
+            if len(detector._word_scancodes) == 0 or detector._force_layout_sync:
                 actual = await switcher.poll_current()
                 if actual != detector.current_layout:
                     detector.current_layout = actual
+                detector._force_layout_sync = False
 
             # Double-Ctrl: select line left of cursor, send to Bedrock for correction
             if key_event.scancode == DOUBLE_CTRL_SCANCODE:

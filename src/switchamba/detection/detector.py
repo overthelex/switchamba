@@ -65,6 +65,7 @@ class LanguageDetector:
         self._dictionary = DictionaryMatcher()
         self._current_layout: str = EN
         self._preferred_cyrillic: str = RU
+        self._force_layout_sync: bool = False
 
     @property
     def current_layout(self) -> str:
@@ -78,8 +79,11 @@ class LanguageDetector:
         """Process a keystroke. Returns Detection on word boundary if wrong layout."""
 
         # Ctrl + any key → buffer is unreliable (paste, cut, undo, etc.)
+        # Reset buffer but keep current_layout — it will be re-synced
+        # at the start of the next word in the main loop
         if ctrl:
             self.reset()
+            self._force_layout_sync = True
             return None
 
         # Word boundary — analyze completed word
