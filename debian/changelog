@@ -1,3 +1,17 @@
+switchamba (0.1.3-1) noble; urgency=medium
+
+  * Fix Double-Ctrl swallowing one word on each repeated press. The
+    post-paste clipboard restore raced the focused app's async paste
+    and replaced the corrected text in the clipboard with the
+    previous (often stale) content before the app finished reading
+    it — so the app pasted the prior clipboard over the selection,
+    effectively deleting a word. Remove the clipboard-restore step;
+    corrected text now stays in the clipboard after the operation.
+  * Slightly bump clipboard settle delays (clear/select/copy) to
+    reduce Wayland clipboard races; improve Double-Ctrl logging.
+
+ -- Vovkes <shepherdvovkes@gmail.com>  Fri, 17 Apr 2026 19:30:00 +0300
+
 switchamba (0.1.2-1) noble; urgency=medium
 
   * Fix trailing space being eaten after word correction: replay the

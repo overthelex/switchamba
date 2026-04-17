@@ -279,52 +279,55 @@ async def _handle_line_correction(reader, switcher, detector) -> None:
     reader.suppress(15.0)
     detector.reset()
 
-    # Preserve user's existing clipboard so we can restore it after
-    old_clipboard = await switcher.read_clipboard()
-
     try:
         # Clear clipboard first so an empty selection cannot leak prior
         # clipboard content into Bedrock / paste path
         await switcher.clear_clipboard()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.08)
 
         # Select text from cursor to line start
         await switcher.select_to_line_start()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.08)
 
         # Copy selection
         await switcher.copy_selection()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.15)
 
         # Read clipboard. If still empty, selection was empty — abort.
         text = await switcher.read_clipboard()
         if not text or not text.strip():
             await switcher.cancel_selection()
-            logger.debug("Double-Ctrl: empty selection, nothing to correct")
+            logger.info("Double-Ctrl: empty selection, nothing to correct")
             return
 
-        logger.info("Double-Ctrl: correcting '%s'", text)
+        logger.info("Double-Ctrl: selected %d chars: '%s'", len(text), text)
 
         # Send to Bedrock Sonnet
         corrected = await _bedrock_client.correct_text(text)
 
-        if corrected and corrected != text:
-            # Paste corrected text (selection is still active, will be replaced)
-            await switcher.write_clipboard_and_paste(corrected)
-            logger.info("Double-Ctrl corrected: '%s' → '%s'", text, corrected)
-        else:
-            # No changes — cancel selection
+        if corrected is None:
             await switcher.cancel_selection()
-            logger.debug("Double-Ctrl: no corrections needed")
+            logger.warning("Double-Ctrl: Bedrock returned nothing")
+            return
+
+        if corrected == text:
+            await switcher.cancel_selection()
+            logger.info("Double-Ctrl: no corrections needed")
+            return
+
+        # Paste corrected text (selection is still active, will be replaced).
+        # Do NOT touch the clipboard again afterwards — the paste is async
+        # in the focused app, so stomping the clipboard here races the app
+        # and causes the previous clipboard to be pasted instead of the
+        # corrected text, effectively dropping a word each press.
+        await switcher.write_clipboard_and_paste(corrected)
+        logger.info("Double-Ctrl corrected (%d → %d chars): '%s' → '%s'",
+                    len(text), len(corrected), text, corrected)
 
     except Exception as e:
         logger.warning("Double-Ctrl correction failed: %s", e)
         await switcher.cancel_selection()
     finally:
-        # Let any pending paste settle before we stomp on the clipboard
-        await asyncio.sleep(0.15)
-        if old_clipboard is not None:
-            await switcher.write_clipboard(old_clipboard)
         # Discard any keys pressed during the operation
         reader.drain_pending()
         reader.suppress(0.3)
