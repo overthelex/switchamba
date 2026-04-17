@@ -301,16 +301,36 @@ class LayoutSwitcher:
             logger.warning("wl-paste failed: %s", e)
         return None
 
+    async def write_clipboard(self, text: str) -> None:
+        """Write text to clipboard via wl-copy."""
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    ["wl-copy", "--", text],
+                    capture_output=True, text=True, timeout=2,
+                ),
+            )
+        except Exception as ex:
+            logger.debug("wl-copy failed: %s", ex)
+
+    async def clear_clipboard(self) -> None:
+        """Clear clipboard via wl-copy --clear."""
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    ["wl-copy", "--clear"],
+                    capture_output=True, text=True, timeout=2,
+                ),
+            )
+        except Exception as ex:
+            logger.debug("wl-copy --clear failed: %s", ex)
+
     async def write_clipboard_and_paste(self, text: str) -> None:
         """Write text to clipboard via wl-copy, then Ctrl+V to paste."""
         from evdev import ecodes as e
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: subprocess.run(
-                ["wl-copy", "--", text],
-                capture_output=True, text=True, timeout=2,
-            ),
-        )
+        await self.write_clipboard(text)
         await asyncio.sleep(0.05)
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: self._send_key_combo(e.KEY_LEFTCTRL, e.KEY_V)
