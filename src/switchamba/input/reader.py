@@ -99,6 +99,22 @@ class KeystrokeReader:
         self._pending_scancodes.clear()
         return pending
 
+    def grab(self) -> None:
+        """Take exclusive control of devices so keypresses don't reach the app."""
+        for device in self._devices:
+            try:
+                device.grab()
+            except (OSError, IOError) as e:
+                logger.debug("Could not grab %s: %s", device.path, e)
+
+    def ungrab(self) -> None:
+        """Release exclusive control of devices."""
+        for device in self._devices:
+            try:
+                device.ungrab()
+            except (OSError, IOError) as e:
+                logger.debug("Could not ungrab %s: %s", device.path, e)
+
     async def start(self) -> None:
         """Open device(s) and prepare for reading."""
         if self._device_path:

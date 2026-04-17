@@ -1,3 +1,15 @@
+switchamba (0.1.1-1) noble; urgency=medium
+
+  * Grab keyboard during word correction so user keys typed mid-replay
+    are queued and flushed after, preventing interleaved output.
+  * Preserve and restore user's clipboard across Double-Ctrl line
+    correction; clear it first to avoid empty-selection fallback to
+    prior clipboard content.
+  * Add LayoutSwitcher.clear_clipboard and split write_clipboard from
+    write_clipboard_and_paste.
+
+ -- Vovkes <shepherdvovkes@gmail.com>  Fri, 17 Apr 2026 12:00:00 +0300
+
 switchamba (0.1.0-1) noble; urgency=medium
 
   * Initial release.

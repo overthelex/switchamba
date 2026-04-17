@@ -195,46 +195,65 @@ async def run(config) -> None:
             # +1 for the space/enter that triggered the boundary
             delete_count = len(word_sc) + 1
 
-            # Suppress evdev during correction
+            # Suppress evdev for the detector and grab the keyboard so user
+            # keystrokes typed during correction are queued and don't
+            # interleave with our backspace/replay.
             suppress_time = delete_count * 0.02 + 0.15 + len(word_sc) * 0.02 + 0.1
             reader.suppress(suppress_time)
+            reader.grab()
 
-            corrected = await switcher.backspace_and_switch(
-                target_lang, delete_count
-            )
-
-            if corrected:
-                # Replay word scancodes in correct layout + space
-                await switcher.replay_scancodes(word_sc, word_sh)
-                await switcher.replay_scancodes(
-                    [key_event.scancode], [key_event.shifted]
+            try:
+                corrected = await switcher.backspace_and_switch(
+                    target_lang, delete_count
                 )
-                detector.current_layout = target_lang
 
-                # Classify detection channel
-                channel = getattr(detection, "_channel", None)
-                if channel is None:
-                    reason = detection.reason
-                    if "ngram+dict" in reason:
-                        channel = "dict" if any(
-                            f": {v}" in reason for v in ["1.0", "0.5"]
-                        ) else "ngram"
-                    elif "script-family" in reason:
-                        channel = "script_family"
-                    elif "exclusive" in reason:
-                        channel = "script_family"
-                    else:
-                        channel = "ngram"
+                if corrected:
+                    # Replay word scancodes in correct layout + space
+                    await switcher.replay_scancodes(word_sc, word_sh)
+                    await switcher.replay_scancodes(
+                        [key_event.scancode], [key_event.shifted]
+                    )
+                    detector.current_layout = target_lang
 
-                stats[channel] = stats.get(channel, 0) + 1
-                stats["total"] += 1
+                    # Classify detection channel
+                    channel = getattr(detection, "_channel", None)
+                    if channel is None:
+                        reason = detection.reason
+                        if "ngram+dict" in reason:
+                            channel = "dict" if any(
+                                f": {v}" in reason for v in ["1.0", "0.5"]
+                            ) else "ngram"
+                        elif "script-family" in reason:
+                            channel = "script_family"
+                        elif "exclusive" in reason:
+                            channel = "script_family"
+                        else:
+                            channel = "ngram"
 
-                logger.info(
-                    "[%s] '%s' → '%s' (%s) | stats: ngram=%d dict=%d family=%d bedrock=%d total=%d",
-                    channel, wrong_text, correct_text, target_lang,
-                    stats["ngram"], stats["dict"], stats["script_family"],
-                    stats["bedrock"], stats["total"],
-                )
+                    stats[channel] = stats.get(channel, 0) + 1
+                    stats["total"] += 1
+
+                    logger.info(
+                        "[%s] '%s' → '%s' (%s) | stats: ngram=%d dict=%d family=%d bedrock=%d total=%d",
+                        channel, wrong_text, correct_text, target_lang,
+                        stats["ngram"], stats["dict"], stats["script_family"],
+                        stats["bedrock"], stats["total"],
+                    )
+
+                # Flush keys the user typed while the keyboard was grabbed.
+                # Replay them via UInput in the (now current) layout and feed
+                # into the detector so the next word's buffer is accurate.
+                pending = reader.drain_pending()
+                if pending:
+                    await switcher.replay_scancodes(
+                        [sc for sc, _ in pending],
+                        [sh for _, sh in pending],
+                    )
+                    for sc, sh in pending:
+                        detector.on_key(sc, sh, False)
+                    logger.debug("Replayed %d key(s) typed during correction", len(pending))
+            finally:
+                reader.ungrab()
     finally:
         await _set_indicator_active(False)
         await reader.stop()
@@ -256,7 +275,15 @@ async def _handle_line_correction(reader, switcher, detector) -> None:
     reader.suppress(15.0)
     detector.reset()
 
+    # Preserve user's existing clipboard so we can restore it after
+    old_clipboard = await switcher.read_clipboard()
+
     try:
+        # Clear clipboard first so an empty selection cannot leak prior
+        # clipboard content into Bedrock / paste path
+        await switcher.clear_clipboard()
+        await asyncio.sleep(0.05)
+
         # Select text from cursor to line start
         await switcher.select_to_line_start()
         await asyncio.sleep(0.05)
@@ -265,11 +292,11 @@ async def _handle_line_correction(reader, switcher, detector) -> None:
         await switcher.copy_selection()
         await asyncio.sleep(0.1)
 
-        # Read clipboard
+        # Read clipboard. If still empty, selection was empty — abort.
         text = await switcher.read_clipboard()
         if not text or not text.strip():
             await switcher.cancel_selection()
-            logger.debug("Double-Ctrl: no text to correct")
+            logger.debug("Double-Ctrl: empty selection, nothing to correct")
             return
 
         logger.info("Double-Ctrl: correcting '%s'", text)
@@ -290,6 +317,10 @@ async def _handle_line_correction(reader, switcher, detector) -> None:
         logger.warning("Double-Ctrl correction failed: %s", e)
         await switcher.cancel_selection()
     finally:
+        # Let any pending paste settle before we stomp on the clipboard
+        await asyncio.sleep(0.15)
+        if old_clipboard is not None:
+            await switcher.write_clipboard(old_clipboard)
         # Discard any keys pressed during the operation
         reader.drain_pending()
         reader.suppress(0.3)
