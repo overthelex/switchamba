@@ -142,10 +142,12 @@ async def run(config) -> None:
 
                 corrected = await switcher.backspace_and_switch(target, delete_count)
                 if corrected:
-                    await switcher.replay_scancodes(word_sc, word_sh)
-                    # Re-type boundary (space)
+                    # Replay word + trailing space in one UInput session
                     from evdev import ecodes as _ec
-                    await switcher.replay_scancodes([_ec.KEY_SPACE], [False])
+                    await switcher.replay_scancodes(
+                        word_sc + [_ec.KEY_SPACE],
+                        word_sh + [False],
+                    )
                     detector.current_layout = target
                     logger.info(
                         "[double-alt] '%s' → '%s' (%s)",
@@ -208,10 +210,12 @@ async def run(config) -> None:
                 )
 
                 if corrected:
-                    # Replay word scancodes in correct layout + space
-                    await switcher.replay_scancodes(word_sc, word_sh)
+                    # Replay word + trigger boundary (space/enter/tab) in a
+                    # single UInput session so the boundary key isn't lost to
+                    # the open/close race of a second UInput.
                     await switcher.replay_scancodes(
-                        [key_event.scancode], [key_event.shifted]
+                        word_sc + [key_event.scancode],
+                        word_sh + [key_event.shifted],
                     )
                     detector.current_layout = target_lang
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import evdev
 from evdev import ecodes
 
-from .keymap import KEYMAP, EDIT_SCANCODES
+from .keymap import KEYMAP, EDIT_SCANCODES, WORD_BOUNDARY_SCANCODES
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,8 @@ class KeystrokeReader:
         self._last_alt_tap: float = 0.0  # monotonic time of last clean Alt tap
         self._running = False
         self._suppress_until: float = 0.0  # Ignore events until this timestamp
-        self._pending_scancodes: list[tuple[int, bool]] = []  # Collected during suppress
+        self._grabbed: bool = False  # True while devices are exclusively grabbed
+        self._pending_scancodes: list[tuple[int, bool]] = []  # Collected during suppress/grab
 
     def suppress(self, duration: float = 0.3) -> None:
         """Suppress event processing for `duration` seconds.
@@ -100,7 +101,15 @@ class KeystrokeReader:
         return pending
 
     def grab(self) -> None:
-        """Take exclusive control of devices so keypresses don't reach the app."""
+        """Take exclusive control of devices so keypresses don't reach the app.
+
+        Sets _grabbed so _device_reader routes every key-down into
+        _pending_scancodes — not only those within _suppress_until.
+        Otherwise, if the correction takes longer than suppress, keys
+        the user types are swallowed by the grab and never replayed.
+        """
+        self._pending_scancodes.clear()
+        self._grabbed = True
         for device in self._devices:
             try:
                 device.grab()
@@ -114,6 +123,7 @@ class KeystrokeReader:
                 device.ungrab()
             except (OSError, IOError) as e:
                 logger.debug("Could not ungrab %s: %s", device.path, e)
+        self._grabbed = False
 
     async def start(self) -> None:
         """Open device(s) and prepare for reading."""
@@ -175,10 +185,17 @@ class KeystrokeReader:
 
                 # During correction replay: collect scancodes but don't emit
                 import time as _time
-                if _time.monotonic() < self._suppress_until:
+                if self._grabbed or _time.monotonic() < self._suppress_until:
                     key_event_raw = evdev.categorize(event)
                     if key_event_raw.keystate == key_event_raw.key_down:
-                        if event.code in KEYMAP:
+                        # Collect every key the user typed during correction —
+                        # letters, digits, punctuation, space/enter/tab — so
+                        # drain_pending can replay them into the focused app.
+                        if (
+                            event.code in KEYMAP
+                            or event.code in WORD_BOUNDARY_SCANCODES
+                            or event.code in EDIT_SCANCODES
+                        ):
                             self._pending_scancodes.append((event.code, self._shift_held))
                     # Track modifiers even during suppress
                     if event.code in (ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT):

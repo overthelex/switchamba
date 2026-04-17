@@ -1,3 +1,17 @@
+switchamba (0.1.2-1) noble; urgency=medium
+
+  * Fix trailing space being eaten after word correction: replay the
+    word and its trigger boundary key in a single UInput session so
+    the boundary isn't lost to the open/close race between two
+    separate UInput instances.
+  * Fix user keystrokes being swallowed when correction outlasts the
+    suppress window: the reader now routes every key-down to the
+    pending buffer while devices are grabbed, not only while within
+    _suppress_until. Includes SPACE/ENTER/TAB and edit keys so they
+    are replayed after ungrab instead of being silently dropped.
+
+ -- Vovkes <shepherdvovkes@gmail.com>  Fri, 17 Apr 2026 14:00:00 +0300
+
 switchamba (0.1.1-1) noble; urgency=medium
 
   * Grab keyboard during word correction so user keys typed mid-replay
